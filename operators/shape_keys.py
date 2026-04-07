@@ -35,7 +35,8 @@ def _common_prefix(names: list[str]) -> str:
 
 class LCW_OT_shape_key_create_default(bpy.types.Operator):
     bl_idname = "lcw.shape_key_create_default"
-    bl_label = "Create Default Shape Keys"
+    bl_label = "Ensure Default Width/Height Keys"
+    bl_description = "Ensures selected mesh objects contain Basis, Width, and Height shape keys"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -53,7 +54,8 @@ class LCW_OT_shape_key_create_default(bpy.types.Operator):
 
 class LCW_OT_shape_key_match_active(bpy.types.Operator):
     bl_idname = "lcw.shape_key_match_active"
-    bl_label = "Match Active Shape Key"
+    bl_label = "Sync Active Shape Key Across Selection"
+    bl_description = "Uses the active object's active shape key as the source and sets the same key active on matching selected objects; deselects non-matching objects"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -81,10 +83,17 @@ class LCW_OT_shape_key_match_active(bpy.types.Operator):
 
 class LCW_OT_shape_key_set_value(bpy.types.Operator):
     bl_idname = "lcw.shape_key_set_value"
-    bl_label = "Set Active Shape Key Value"
+    bl_label = "Set Active Shape Key Value Across Selection"
+    bl_description = "Uses the active object's active shape key and copies the entered value to matching selected objects; deselects non-matching objects"
     bl_options = {"REGISTER", "UNDO"}
 
-    value: bpy.props.FloatProperty(name="Value", default=1.0, min=0.0, max=1.0)
+    value: bpy.props.FloatProperty(
+        name="Value",
+        description="Shape key value applied to the active shape key across matching selected objects",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -116,7 +125,8 @@ class LCW_OT_shape_key_set_value(bpy.types.Operator):
 
 class LCW_OT_shape_key_copy_names(bpy.types.Operator):
     bl_idname = "lcw.shape_key_copy_names"
-    bl_label = "Copy Shape Key Names from Active"
+    bl_label = "Copy Shape Key Names from Active Object"
+    bl_description = "Uses the active object as the source and ensures selected mesh objects contain the same shape key names"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -141,10 +151,15 @@ class LCW_OT_shape_key_copy_names(bpy.types.Operator):
 
 class LCW_OT_shape_key_set_active_phrase(bpy.types.Operator):
     bl_idname = "lcw.shape_key_set_active_phrase"
-    bl_label = "Set Active Shape Key by Phrase"
+    bl_label = "Select Shape Key by Name Fragment"
+    bl_description = "Finds the first shape key containing the entered text on each selected object and deselects objects without a match"
     bl_options = {"REGISTER", "UNDO"}
 
-    phrase: bpy.props.StringProperty(name="Phrase", default="")
+    phrase: bpy.props.StringProperty(
+        name="Name Fragment",
+        description="Text used to find the first matching shape key on each selected object",
+        default="",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -173,7 +188,8 @@ class LCW_OT_shape_key_set_active_phrase(bpy.types.Operator):
 
 class LCW_OT_shape_key_zero_all(bpy.types.Operator):
     bl_idname = "lcw.shape_key_zero_all"
-    bl_label = "Set All Shape Keys to Zero"
+    bl_label = "Zero All Shape Key Values"
+    bl_description = "Sets all shape key values on selected objects to 0.0"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -192,10 +208,15 @@ class LCW_OT_shape_key_zero_all(bpy.types.Operator):
 
 class LCW_OT_shape_key_add_prefix(bpy.types.Operator):
     bl_idname = "lcw.shape_key_add_prefix"
-    bl_label = "Add Prefix to Shape Keys"
+    bl_label = "Add Prefix to Non-Basis Shape Keys"
+    bl_description = "Adds the entered prefix to every non-Basis shape key name on selected objects"
     bl_options = {"REGISTER", "UNDO"}
 
-    prefix: bpy.props.StringProperty(name="Prefix", default="")
+    prefix: bpy.props.StringProperty(
+        name="Prefix",
+        description="Text added to the start of each non-Basis shape key name",
+        default="",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -217,11 +238,20 @@ class LCW_OT_shape_key_add_prefix(bpy.types.Operator):
 
 class LCW_OT_shape_key_replace_words(bpy.types.Operator):
     bl_idname = "lcw.shape_key_replace_words"
-    bl_label = "Replace in Shape Key Names"
+    bl_label = "Replace Text in Non-Basis Shape Key Names"
+    bl_description = "Replaces the search text in non-Basis shape key names on selected objects"
     bl_options = {"REGISTER", "UNDO"}
 
-    search_text: bpy.props.StringProperty(name="Search", default="")
-    replace_text: bpy.props.StringProperty(name="Replace", default="")
+    search_text: bpy.props.StringProperty(
+        name="Search Text",
+        description="Text to search for in non-Basis shape key names",
+        default="",
+    )
+    replace_text: bpy.props.StringProperty(
+        name="Replace With",
+        description="Replacement text used when renaming matching shape key names",
+        default="",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -243,7 +273,8 @@ class LCW_OT_shape_key_replace_words(bpy.types.Operator):
 
 class LCW_OT_shape_key_reset_all(bpy.types.Operator):
     bl_idname = "lcw.shape_key_reset_all"
-    bl_label = "Reset All Shape Keys"
+    bl_label = "Reset Shape Keys"
+    bl_description = "Rebuilds non-Basis shape keys with the same names so they return to an empty default state"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -265,10 +296,15 @@ class LCW_OT_shape_key_reset_all(bpy.types.Operator):
 
 class LCW_OT_shape_key_reset_by_phrases(bpy.types.Operator):
     bl_idname = "lcw.shape_key_reset_by_phrases"
-    bl_label = "Reset Shape Keys by Phrases"
+    bl_label = "Reset Matching Shape Keys by Name"
+    bl_description = "Recreates non-Basis shape keys whose names contain one of the entered fragments"
     bl_options = {"REGISTER", "UNDO"}
 
-    phrases: bpy.props.StringProperty(name="Phrases", default="Width,Height")
+    phrases: bpy.props.StringProperty(
+        name="Name Fragments",
+        description="Comma-separated fragments used to find shape keys that should be reset",
+        default="Width,Height",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -306,10 +342,15 @@ class LCW_OT_shape_key_reset_by_phrases(bpy.types.Operator):
 
 class LCW_OT_shape_key_deselect_phrase(bpy.types.Operator):
     bl_idname = "lcw.shape_key_deselect_phrase"
-    bl_label = "Deselect by Shape Key Phrase"
+    bl_label = "Deselect Objects Containing Shape Key Text"
+    bl_description = "Deselects scene objects whose shape key names contain the entered text"
     bl_options = {"REGISTER", "UNDO"}
 
-    phrase: bpy.props.StringProperty(name="Phrase", default="")
+    phrase: bpy.props.StringProperty(
+        name="Name Fragment",
+        description="Text used to find shape key names on scene objects that should be deselected",
+        default="",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -332,7 +373,8 @@ class LCW_OT_shape_key_deselect_phrase(bpy.types.Operator):
 
 class LCW_OT_shape_key_names_check(bpy.types.Operator):
     bl_idname = "lcw.shape_key_names_check"
-    bl_label = "Create Shape Key Name Collections"
+    bl_label = "Create Analysis Collections from Shape Key Names"
+    bl_description = "Builds helper collections from words found in shape key names so related objects can be inspected"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -366,10 +408,15 @@ class LCW_OT_shape_key_names_check(bpy.types.Operator):
 
 class LCW_OT_shape_key_create_auto_prefix(bpy.types.Operator):
     bl_idname = "lcw.shape_key_create_auto_prefix"
-    bl_label = "Create Auto Prefix Shape Key"
+    bl_label = "Create Shape Key from Common Prefix"
+    bl_description = "Detects the common prefix of existing non-Basis shape keys and creates one new key with the entered suffix"
     bl_options = {"REGISTER", "UNDO"}
 
-    suffix: bpy.props.StringProperty(name="Suffix", default="_v2")
+    suffix: bpy.props.StringProperty(
+        name="Suffix",
+        description="Text appended to the detected common prefix when creating a new shape key",
+        default="_v2",
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
@@ -389,14 +436,41 @@ class LCW_OT_shape_key_create_auto_prefix(bpy.types.Operator):
 
 class LCW_OT_shape_key_animate_partial(bpy.types.Operator):
     bl_idname = "lcw.shape_key_animate_partial"
-    bl_label = "Animate Shape Keys by Partial Names"
+    bl_label = "Keyframe Shape Keys by Name Fragment"
+    bl_description = "Finds shape keys whose names contain the entered fragments and inserts value keyframes across the frame range"
     bl_options = {"REGISTER", "UNDO"}
 
-    partial_names: bpy.props.StringProperty(name="Shape Key Names", default="width,height")
-    start_frame: bpy.props.IntProperty(name="Start Frame", default=1, min=0)
-    end_frame: bpy.props.IntProperty(name="End Frame", default=30, min=1)
-    min_value: bpy.props.FloatProperty(name="Min Value", default=0.0, min=0.0, max=1.0)
-    max_value: bpy.props.FloatProperty(name="Max Value", default=1.0, min=0.0, max=1.0)
+    partial_names: bpy.props.StringProperty(
+        name="Name Fragments",
+        description="Comma-separated fragments used to find shape keys that should be keyframed",
+        default="width,height",
+    )
+    start_frame: bpy.props.IntProperty(
+        name="Start Frame",
+        description="First frame used for keyframing",
+        default=1,
+        min=0,
+    )
+    end_frame: bpy.props.IntProperty(
+        name="End Frame",
+        description="Last frame used for keyframing",
+        default=30,
+        min=1,
+    )
+    min_value: bpy.props.FloatProperty(
+        name="Min Value",
+        description="Shape key value used on the first frame",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+    )
+    max_value: bpy.props.FloatProperty(
+        name="Max Value",
+        description="Shape key value used on the last frame",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:

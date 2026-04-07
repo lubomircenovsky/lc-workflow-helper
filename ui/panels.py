@@ -17,6 +17,35 @@ def _tool_box(layout, title: str):
     return box
 
 
+def _draw_usage_hint(layout: bpy.types.UILayout, text: str) -> None:
+    row = layout.row(align=True)
+    row.scale_y = 0.85
+    row.label(text=text, icon="INFO")
+
+
+def _draw_collapsible_tool(
+    layout: bpy.types.UILayout,
+    state,
+    toggle_name: str,
+    title: str,
+    *,
+    icon: str = "TOOL_SETTINGS",
+    usage_hints: tuple[str, ...] = (),
+):
+    box = layout.box()
+    row = box.row(align=True)
+    expanded = getattr(state, toggle_name)
+    row.prop(state, toggle_name, text="", emboss=False, icon="TRIA_DOWN" if expanded else "TRIA_RIGHT")
+    row.label(text=title, icon=icon)
+    if not expanded:
+        return None
+
+    body = box.column(align=False)
+    for hint in usage_hints:
+        _draw_usage_hint(body, hint)
+    return body
+
+
 def _draw_preset_action_settings(layout: bpy.types.UILayout, action) -> None:
     definition = ACTION_MAP.get(action.action_id)
     if definition is None:
@@ -83,58 +112,196 @@ class LCW_PT_shape_keys(LCW_PT_base, bpy.types.Panel):
         layout = self.layout
         state = wm_state(context)
 
-        box = _tool_box(layout, "Selection Tools")
-        _assign_operator_props(box.operator("lcw.shape_key_create_default"), {})
-        box.prop(state, "shape_key_phrase")
-        op = box.operator("lcw.shape_key_set_active_phrase")
-        _assign_operator_props(op, {"phrase": state.shape_key_phrase})
-        op = box.operator("lcw.shape_key_deselect_phrase")
-        _assign_operator_props(op, {"phrase": state.shape_key_phrase})
-        box.operator("lcw.shape_key_match_active")
-        box.prop(state, "shape_key_value")
-        op = box.operator("lcw.shape_key_set_value")
-        _assign_operator_props(op, {"value": state.shape_key_value})
+        box = _tool_box(layout, "Selection")
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_sync_active_open",
+            "Sync Active Shape Key Across Selection",
+            icon="RESTRICT_SELECT_OFF",
+            usage_hints=("Active object drives selection.", "Deselects non-matching objects."),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_match_active")
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_select_by_name_open",
+            "Select Shape Key by Name Fragment",
+            icon="VIEWZOOM",
+            usage_hints=("Runs on all selected objects.", "Deselects non-matching objects."),
+        )
+        if tool:
+            tool.prop(state, "shape_key_select_fragment")
+            op = tool.operator("lcw.shape_key_set_active_phrase")
+            _assign_operator_props(op, {"phrase": state.shape_key_select_fragment})
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_set_value_open",
+            "Set Active Shape Key Value Across Selection",
+            icon="DRIVER",
+            usage_hints=("Active object drives selection.", "Deselects non-matching objects."),
+        )
+        if tool:
+            tool.prop(state, "shape_key_value")
+            op = tool.operator("lcw.shape_key_set_value")
+            _assign_operator_props(op, {"value": state.shape_key_value})
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_copy_names_open",
+            "Copy Shape Key Names from Active Object",
+            icon="COPYDOWN",
+            usage_hints=("Active object drives selection.", "Runs on all selected objects."),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_copy_names")
 
         box = _tool_box(layout, "Naming")
-        box.prop(state, "shape_key_prefix")
-        op = box.operator("lcw.shape_key_add_prefix")
-        _assign_operator_props(op, {"prefix": state.shape_key_prefix})
-        box.prop(state, "shape_key_search")
-        box.prop(state, "shape_key_replace")
-        op = box.operator("lcw.shape_key_replace_words")
-        _assign_operator_props(op, {"search_text": state.shape_key_search, "replace_text": state.shape_key_replace})
-        box.prop(state, "shape_key_suffix")
-        op = box.operator("lcw.shape_key_create_auto_prefix")
-        _assign_operator_props(op, {"suffix": state.shape_key_suffix})
-        box.operator("lcw.shape_key_copy_names")
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_add_prefix_open",
+            "Add Prefix to Non-Basis Shape Keys",
+            icon="SORTALPHA",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.prop(state, "shape_key_prefix")
+            op = tool.operator("lcw.shape_key_add_prefix")
+            _assign_operator_props(op, {"prefix": state.shape_key_prefix})
 
-        box = _tool_box(layout, "Reset and Utilities")
-        box.operator("lcw.shape_key_zero_all")
-        box.operator("lcw.shape_key_reset_all")
-        box.prop(state, "shape_key_phrases")
-        op = box.operator("lcw.shape_key_reset_by_phrases")
-        _assign_operator_props(op, {"phrases": state.shape_key_phrases})
-        box.operator("lcw.shape_key_names_check")
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_replace_text_open",
+            "Replace Text in Non-Basis Shape Key Names",
+            icon="GREASEPENCIL",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.prop(state, "shape_key_search")
+            tool.prop(state, "shape_key_replace")
+            op = tool.operator("lcw.shape_key_replace_words")
+            _assign_operator_props(op, {"search_text": state.shape_key_search, "replace_text": state.shape_key_replace})
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_common_prefix_open",
+            "Create Shape Key from Common Prefix",
+            icon="ADD",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.prop(state, "shape_key_suffix")
+            op = tool.operator("lcw.shape_key_create_auto_prefix")
+            _assign_operator_props(op, {"suffix": state.shape_key_suffix})
+
+        box = _tool_box(layout, "Reset")
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_zero_values_open",
+            "Zero All Shape Key Values",
+            icon="LOOP_BACK",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_zero_all")
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_reset_all_open",
+            "Reset Shape Keys",
+            icon="FILE_REFRESH",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_reset_all")
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_reset_matching_open",
+            "Reset Matching Shape Keys by Name",
+            icon="FILTER",
+            usage_hints=("Runs on all selected objects.",),
+        )
+        if tool:
+            tool.prop(state, "shape_key_phrases")
+            op = tool.operator("lcw.shape_key_reset_by_phrases")
+            _assign_operator_props(op, {"phrases": state.shape_key_phrases})
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_deselect_text_open",
+            "Deselect Objects Containing Shape Key Text",
+            icon="RESTRICT_SELECT_ON",
+            usage_hints=("Checks scene objects for matching shape key names.", "Deselects matching objects."),
+        )
+        if tool:
+            tool.prop(state, "shape_key_deselect_fragment")
+            op = tool.operator("lcw.shape_key_deselect_phrase")
+            _assign_operator_props(op, {"phrase": state.shape_key_deselect_fragment})
 
         box = _tool_box(layout, "Animation")
-        box.prop(state, "shape_key_animation_names")
-        row = box.row(align=True)
-        row.prop(state, "shape_key_animation_start")
-        row.prop(state, "shape_key_animation_end")
-        row = box.row(align=True)
-        row.prop(state, "shape_key_animation_min")
-        row.prop(state, "shape_key_animation_max")
-        op = box.operator("lcw.shape_key_animate_partial")
-        _assign_operator_props(
-            op,
-            {
-                "partial_names": state.shape_key_animation_names,
-                "start_frame": state.shape_key_animation_start,
-                "end_frame": state.shape_key_animation_end,
-                "min_value": state.shape_key_animation_min,
-                "max_value": state.shape_key_animation_max,
-            },
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_animation_open",
+            "Keyframe Shape Keys by Name Fragment",
+            icon="DECORATE_ANIMATE",
+            usage_hints=("Runs on all selected objects.",),
         )
+        if tool:
+            tool.prop(state, "shape_key_animation_names")
+            row = tool.row(align=True)
+            row.prop(state, "shape_key_animation_start")
+            row.prop(state, "shape_key_animation_end")
+            row = tool.row(align=True)
+            row.prop(state, "shape_key_animation_min")
+            row.prop(state, "shape_key_animation_max")
+            op = tool.operator("lcw.shape_key_animate_partial")
+            _assign_operator_props(
+                op,
+                {
+                    "partial_names": state.shape_key_animation_names,
+                    "start_frame": state.shape_key_animation_start,
+                    "end_frame": state.shape_key_animation_end,
+                    "min_value": state.shape_key_animation_min,
+                    "max_value": state.shape_key_animation_max,
+                },
+            )
+
+        box = _tool_box(layout, "Advanced")
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_default_keys_open",
+            "Ensure Default Width/Height Keys",
+            icon="PREFERENCES",
+            usage_hints=("Runs on all selected objects.", "Creates Basis, Width, and Height when missing."),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_create_default")
+
+        tool = _draw_collapsible_tool(
+            box,
+            state,
+            "shape_tool_analysis_open",
+            "Create Analysis Collections from Shape Key Names",
+            icon="OUTLINER_COLLECTION",
+            usage_hints=("Runs on all selected objects.", "Creates helper collections for inspection."),
+        )
+        if tool:
+            tool.operator("lcw.shape_key_names_check")
 
 
 class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):

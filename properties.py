@@ -61,18 +61,93 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     uv_lightmap_name: StringProperty(name="Second UV Name", default="Lightmap")
     uv_channel_number: IntProperty(name="UV Channel", default=2, min=1)
     uv_deselect_if_missing: BoolProperty(name="Deselect if Missing", default=True)
-    shape_key_phrase: StringProperty(name="Phrase", default="")
-    shape_key_prefix: StringProperty(name="Prefix", default="")
-    shape_key_search: StringProperty(name="Search", default="")
-    shape_key_replace: StringProperty(name="Replace", default="")
-    shape_key_phrases: StringProperty(name="Phrases", default="Width,Height")
-    shape_key_suffix: StringProperty(name="Suffix", default="_v2")
-    shape_key_value: FloatProperty(name="Shape Key Value", default=1.0, min=0.0, max=1.0)
-    shape_key_animation_names: StringProperty(name="Shape Key Names", default="width,height")
-    shape_key_animation_start: IntProperty(name="Start Frame", default=1, min=0)
-    shape_key_animation_end: IntProperty(name="End Frame", default=30, min=1)
-    shape_key_animation_min: FloatProperty(name="Min Value", default=0.0, min=0.0, max=1.0)
-    shape_key_animation_max: FloatProperty(name="Max Value", default=1.0, min=0.0, max=1.0)
+    shape_key_select_fragment: StringProperty(
+        name="Name Fragment",
+        description="Text used to find the first matching shape key on each selected object",
+        default="",
+    )
+    shape_key_deselect_fragment: StringProperty(
+        name="Name Fragment",
+        description="Text used to find scene objects that should be deselected by shape key name",
+        default="",
+    )
+    shape_key_prefix: StringProperty(
+        name="Prefix",
+        description="Text added to the start of each non-Basis shape key name",
+        default="",
+    )
+    shape_key_search: StringProperty(
+        name="Search Text",
+        description="Text to replace in non-Basis shape key names",
+        default="",
+    )
+    shape_key_replace: StringProperty(
+        name="Replace With",
+        description="Replacement text for matching shape key names",
+        default="",
+    )
+    shape_key_phrases: StringProperty(
+        name="Name Fragments",
+        description="Comma-separated fragments used to find shape keys to reset",
+        default="Width,Height",
+    )
+    shape_key_suffix: StringProperty(
+        name="Suffix",
+        description="Suffix added to the detected common prefix when creating a new shape key",
+        default="_v2",
+    )
+    shape_key_value: FloatProperty(
+        name="Shape Key Value",
+        description="Value copied from the active shape key to matching selected objects",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
+    shape_key_animation_names: StringProperty(
+        name="Name Fragments",
+        description="Comma-separated fragments used to find shape keys to keyframe",
+        default="width,height",
+    )
+    shape_key_animation_start: IntProperty(
+        name="Start Frame",
+        description="First frame used for shape key keyframes",
+        default=1,
+        min=0,
+    )
+    shape_key_animation_end: IntProperty(
+        name="End Frame",
+        description="Last frame used for shape key keyframes",
+        default=30,
+        min=1,
+    )
+    shape_key_animation_min: FloatProperty(
+        name="Min Value",
+        description="Shape key value used on the first frame",
+        default=0.0,
+        min=0.0,
+        max=1.0,
+    )
+    shape_key_animation_max: FloatProperty(
+        name="Max Value",
+        description="Shape key value used on the last frame",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+    )
+    shape_tool_sync_active_open: BoolProperty(name="Sync Active Shape Key", default=True)
+    shape_tool_select_by_name_open: BoolProperty(name="Select Shape Key by Name", default=False)
+    shape_tool_set_value_open: BoolProperty(name="Set Active Shape Key Value", default=False)
+    shape_tool_copy_names_open: BoolProperty(name="Copy Shape Key Names", default=False)
+    shape_tool_add_prefix_open: BoolProperty(name="Add Prefix", default=False)
+    shape_tool_replace_text_open: BoolProperty(name="Replace Text", default=False)
+    shape_tool_common_prefix_open: BoolProperty(name="Create from Common Prefix", default=False)
+    shape_tool_zero_values_open: BoolProperty(name="Zero Shape Key Values", default=False)
+    shape_tool_reset_all_open: BoolProperty(name="Reset Shape Keys", default=False)
+    shape_tool_reset_matching_open: BoolProperty(name="Reset Matching Shape Keys", default=False)
+    shape_tool_deselect_text_open: BoolProperty(name="Deselect by Shape Key Text", default=False)
+    shape_tool_animation_open: BoolProperty(name="Keyframe Shape Keys", default=False)
+    shape_tool_default_keys_open: BoolProperty(name="Ensure Default Keys", default=False)
+    shape_tool_analysis_open: BoolProperty(name="Create Analysis Collections", default=False)
     object_offset_y: FloatProperty(name="Y Offset", default=1.0)
     rename_suffix_width: IntProperty(name="Suffix Digits", default=2, min=1, max=6)
     kalibra_export_csv: StringProperty(name="CSV Path", subtype="FILE_PATH", default="")
