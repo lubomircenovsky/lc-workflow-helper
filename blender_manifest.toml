@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "lc_workflow_helper"
+version = "0.1.0"
+name = "LC Workflow helper"
+tagline = "Workflow helpers for LC Blender production tasks"
+maintainer = "Lubomir"
+type = "add-on"
+
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
