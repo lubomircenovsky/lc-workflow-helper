@@ -9,6 +9,7 @@ def ensure_color_attribute(
     domain: str = "CORNER",
     data_type: str = "BYTE_COLOR",
     replace_existing: bool = False,
+    fill_color: tuple[float, float, float, float] | None = None,
 ):
     existing = mesh.color_attributes.get(attribute_name)
     if existing and replace_existing:
@@ -17,6 +18,10 @@ def ensure_color_attribute(
 
     if existing is None:
         existing = mesh.color_attributes.new(attribute_name, data_type, domain)
+
+    if fill_color is not None:
+        for element in existing.data:
+            element.color = fill_color
 
     mesh.color_attributes.active_color = existing
     return existing

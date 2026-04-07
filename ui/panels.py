@@ -17,10 +17,26 @@ def _tool_box(layout, title: str):
     return box
 
 
-def _draw_usage_hint(layout: bpy.types.UILayout, text: str) -> None:
-    row = layout.row(align=True)
-    row.scale_y = 0.85
-    row.label(text=text, icon="INFO")
+def _simple_tool_box(layout: bpy.types.UILayout):
+    return layout.box().column(align=False)
+
+
+def _draw_collapsible_section(
+    layout: bpy.types.UILayout,
+    state,
+    toggle_name: str,
+    title: str,
+    *,
+    icon: str = "DISCLOSURE_TRI_RIGHT",
+):
+    box = layout.box()
+    row = box.row(align=True)
+    expanded = getattr(state, toggle_name)
+    row.prop(state, toggle_name, text="", emboss=False, icon="TRIA_DOWN" if expanded else "TRIA_RIGHT")
+    row.label(text=title, icon=icon)
+    if not expanded:
+        return None
+    return box.column(align=False)
 
 
 def _draw_collapsible_tool(
@@ -30,7 +46,6 @@ def _draw_collapsible_tool(
     title: str,
     *,
     icon: str = "TOOL_SETTINGS",
-    usage_hints: tuple[str, ...] = (),
 ):
     box = layout.box()
     row = box.row(align=True)
@@ -40,10 +55,7 @@ def _draw_collapsible_tool(
     if not expanded:
         return None
 
-    body = box.column(align=False)
-    for hint in usage_hints:
-        _draw_usage_hint(body, hint)
-    return body
+    return box.column(align=False)
 
 
 def _draw_preset_action_settings(layout: bpy.types.UILayout, action) -> None:
@@ -112,195 +124,132 @@ class LCW_PT_shape_keys(LCW_PT_base, bpy.types.Panel):
         layout = self.layout
         state = wm_state(context)
 
-        box = _tool_box(layout, "Selection")
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_sync_active_open",
-            "Sync Active Shape Key Across Selection",
-            icon="RESTRICT_SELECT_OFF",
-            usage_hints=("Active object drives selection.", "Deselects non-matching objects."),
-        )
-        if tool:
+        section = _draw_collapsible_section(layout, state, "shape_section_selection_open", "Selection", icon="RESTRICT_SELECT_OFF")
+        if section:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_match_active")
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_select_by_name_open",
-            "Select Shape Key by Name Fragment",
-            icon="VIEWZOOM",
-            usage_hints=("Runs on all selected objects.", "Deselects non-matching objects."),
-        )
-        if tool:
-            tool.prop(state, "shape_key_select_fragment")
-            op = tool.operator("lcw.shape_key_set_active_phrase")
-            _assign_operator_props(op, {"phrase": state.shape_key_select_fragment})
-
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_set_value_open",
-            "Set Active Shape Key Value Across Selection",
-            icon="DRIVER",
-            usage_hints=("Active object drives selection.", "Deselects non-matching objects."),
-        )
-        if tool:
-            tool.prop(state, "shape_key_value")
-            op = tool.operator("lcw.shape_key_set_value")
-            _assign_operator_props(op, {"value": state.shape_key_value})
-
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_copy_names_open",
-            "Copy Shape Key Names from Active Object",
-            icon="COPYDOWN",
-            usage_hints=("Active object drives selection.", "Runs on all selected objects."),
-        )
-        if tool:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_copy_names")
 
-        box = _tool_box(layout, "Naming")
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_add_prefix_open",
-            "Add Prefix to Non-Basis Shape Keys",
-            icon="SORTALPHA",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
-            tool.prop(state, "shape_key_prefix")
-            op = tool.operator("lcw.shape_key_add_prefix")
-            _assign_operator_props(op, {"prefix": state.shape_key_prefix})
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_select_by_name_open",
+                "Select Shape Key by Name Fragment",
+                icon="VIEWZOOM",
+            )
+            if tool:
+                tool.prop(state, "shape_key_select_fragment")
+                op = tool.operator("lcw.shape_key_set_active_phrase")
+                _assign_operator_props(op, {"phrase": state.shape_key_select_fragment})
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_replace_text_open",
-            "Replace Text in Non-Basis Shape Key Names",
-            icon="GREASEPENCIL",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
-            tool.prop(state, "shape_key_search")
-            tool.prop(state, "shape_key_replace")
-            op = tool.operator("lcw.shape_key_replace_words")
-            _assign_operator_props(op, {"search_text": state.shape_key_search, "replace_text": state.shape_key_replace})
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_set_value_open",
+                "Set Active Shape Key Value Across Selection",
+                icon="DRIVER",
+            )
+            if tool:
+                tool.prop(state, "shape_key_value")
+                op = tool.operator("lcw.shape_key_set_value")
+                _assign_operator_props(op, {"value": state.shape_key_value})
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_common_prefix_open",
-            "Create Shape Key from Common Prefix",
-            icon="ADD",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
-            tool.prop(state, "shape_key_suffix")
-            op = tool.operator("lcw.shape_key_create_auto_prefix")
-            _assign_operator_props(op, {"suffix": state.shape_key_suffix})
+        section = _draw_collapsible_section(layout, state, "shape_section_naming_open", "Naming", icon="SORTALPHA")
+        if section:
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_add_prefix_open",
+                "Add Prefix to Non-Basis Shape Keys",
+                icon="SORTALPHA",
+            )
+            if tool:
+                tool.prop(state, "shape_key_prefix")
+                op = tool.operator("lcw.shape_key_add_prefix")
+                _assign_operator_props(op, {"prefix": state.shape_key_prefix})
 
-        box = _tool_box(layout, "Reset")
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_zero_values_open",
-            "Zero All Shape Key Values",
-            icon="LOOP_BACK",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_replace_text_open",
+                "Replace Text in Non-Basis Shape Key Names",
+                icon="GREASEPENCIL",
+            )
+            if tool:
+                tool.prop(state, "shape_key_search")
+                tool.prop(state, "shape_key_replace")
+                op = tool.operator("lcw.shape_key_replace_words")
+                _assign_operator_props(op, {"search_text": state.shape_key_search, "replace_text": state.shape_key_replace})
+
+        section = _draw_collapsible_section(layout, state, "shape_section_reset_open", "Reset", icon="FILE_REFRESH")
+        if section:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_zero_all")
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_reset_all_open",
-            "Reset Shape Keys",
-            icon="FILE_REFRESH",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_reset_all")
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_reset_matching_open",
-            "Reset Matching Shape Keys by Name",
-            icon="FILTER",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
-            tool.prop(state, "shape_key_phrases")
-            op = tool.operator("lcw.shape_key_reset_by_phrases")
-            _assign_operator_props(op, {"phrases": state.shape_key_phrases})
-
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_deselect_text_open",
-            "Deselect Objects Containing Shape Key Text",
-            icon="RESTRICT_SELECT_ON",
-            usage_hints=("Checks scene objects for matching shape key names.", "Deselects matching objects."),
-        )
-        if tool:
-            tool.prop(state, "shape_key_deselect_fragment")
-            op = tool.operator("lcw.shape_key_deselect_phrase")
-            _assign_operator_props(op, {"phrase": state.shape_key_deselect_fragment})
-
-        box = _tool_box(layout, "Animation")
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_animation_open",
-            "Keyframe Shape Keys by Name Fragment",
-            icon="DECORATE_ANIMATE",
-            usage_hints=("Runs on all selected objects.",),
-        )
-        if tool:
-            tool.prop(state, "shape_key_animation_names")
-            row = tool.row(align=True)
-            row.prop(state, "shape_key_animation_start")
-            row.prop(state, "shape_key_animation_end")
-            row = tool.row(align=True)
-            row.prop(state, "shape_key_animation_min")
-            row.prop(state, "shape_key_animation_max")
-            op = tool.operator("lcw.shape_key_animate_partial")
-            _assign_operator_props(
-                op,
-                {
-                    "partial_names": state.shape_key_animation_names,
-                    "start_frame": state.shape_key_animation_start,
-                    "end_frame": state.shape_key_animation_end,
-                    "min_value": state.shape_key_animation_min,
-                    "max_value": state.shape_key_animation_max,
-                },
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_reset_matching_open",
+                "Reset Matching Shape Keys by Name",
+                icon="FILTER",
             )
+            if tool:
+                tool.prop(state, "shape_key_phrases")
+                op = tool.operator("lcw.shape_key_reset_by_phrases")
+                _assign_operator_props(op, {"phrases": state.shape_key_phrases})
 
-        box = _tool_box(layout, "Advanced")
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_default_keys_open",
-            "Ensure Default Width/Height Keys",
-            icon="PREFERENCES",
-            usage_hints=("Runs on all selected objects.", "Creates Basis, Width, and Height when missing."),
-        )
-        if tool:
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_deselect_text_open",
+                "Deselect Objects Containing Shape Key Text",
+                icon="RESTRICT_SELECT_ON",
+            )
+            if tool:
+                tool.prop(state, "shape_key_deselect_fragment")
+                op = tool.operator("lcw.shape_key_deselect_phrase")
+                _assign_operator_props(op, {"phrase": state.shape_key_deselect_fragment})
+
+        section = _draw_collapsible_section(layout, state, "shape_section_animation_open", "Animation", icon="DECORATE_ANIMATE")
+        if section:
+            tool = _draw_collapsible_tool(
+                section,
+                state,
+                "shape_tool_animation_open",
+                "Preview Shape Keys by Name Fragment",
+                icon="DECORATE_ANIMATE",
+            )
+            if tool:
+                tool.prop(state, "shape_key_animation_names")
+                row = tool.row(align=True)
+                row.prop(state, "shape_key_animation_start")
+                row.prop(state, "shape_key_animation_end")
+                row = tool.row(align=True)
+                row.prop(state, "shape_key_animation_min")
+                row.prop(state, "shape_key_animation_max")
+                op = tool.operator("lcw.shape_key_animate_partial")
+                _assign_operator_props(
+                    op,
+                    {
+                        "partial_names": state.shape_key_animation_names,
+                        "start_frame": state.shape_key_animation_start,
+                        "end_frame": state.shape_key_animation_end,
+                        "min_value": state.shape_key_animation_min,
+                        "max_value": state.shape_key_animation_max,
+                    },
+                )
+
+        section = _draw_collapsible_section(layout, state, "shape_section_advanced_open", "Advanced", icon="PREFERENCES")
+        if section:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_create_default")
 
-        tool = _draw_collapsible_tool(
-            box,
-            state,
-            "shape_tool_analysis_open",
-            "Create Analysis Collections from Shape Key Names",
-            icon="OUTLINER_COLLECTION",
-            usage_hints=("Runs on all selected objects.", "Creates helper collections for inspection."),
-        )
-        if tool:
+            tool = _simple_tool_box(section)
             tool.operator("lcw.shape_key_names_check")
 
 
@@ -314,17 +263,36 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
         layout = self.layout
         state = wm_state(context)
 
-        box = _tool_box(layout, "Object Materials")
+        box = layout.box()
+        row = box.row(align=True)
+        row.operator("lcw.material_link_slots_data", icon="MESH_DATA")
+        row.operator("lcw.material_link_slots_object", icon="OBJECT_DATA")
+        box.operator("lcw.material_toggle_link")
+
+        box = layout.box()
+        for slot_index in range(1, 4):
+            row = box.row(align=True)
+            row.prop(state, f"material_quick_name_{slot_index}", text="")
+            op = row.operator("lcw.material_use_quick_name", text="Use")
+            op.slot_index = slot_index
         box.prop(state, "material_name")
         op = box.operator("lcw.material_assign_object")
         _assign_operator_props(op, {"material_name": state.material_name})
-        box.operator("lcw.material_toggle_link")
-        box.operator("lcw.material_remove_unused_slots")
 
-        box = _tool_box(layout, "Selected Faces")
-        box.prop(state, "face_material_name")
-        op = box.operator("lcw.material_assign_selected_faces")
-        _assign_operator_props(op, {"material_name": state.face_material_name})
+        box = _draw_collapsible_tool(
+            layout,
+            state,
+            "material_tool_assign_faces_open",
+            "Assign Material to Selected Faces",
+            icon="EDITMODE_HLT",
+        )
+        if box:
+            box.prop(state, "face_material_name")
+            op = box.operator("lcw.material_assign_selected_faces")
+            _assign_operator_props(op, {"material_name": state.face_material_name})
+
+        box = _simple_tool_box(layout)
+        box.operator("lcw.material_remove_unused_slots")
 
 
 class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
@@ -337,36 +305,53 @@ class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
         layout = self.layout
         state = wm_state(context)
 
-        box = _tool_box(layout, "Color Attribute")
-        box.prop(state, "color_attribute_name")
-        box.prop(state, "color_attribute_domain")
-        box.prop(state, "color_attribute_type")
-        box.prop(state, "replace_color_attribute")
-        op = box.operator("lcw.color_attribute_initialize")
-        _assign_operator_props(
-            op,
-            {
-                "attribute_name": state.color_attribute_name,
-                "domain": state.color_attribute_domain,
-                "data_type": state.color_attribute_type,
-                "replace_existing": state.replace_color_attribute,
-            },
+        box = _draw_collapsible_tool(
+            layout,
+            state,
+            "color_tool_initialize_open",
+            "Initialize Color Attribute",
+            icon="GROUP_VCOL",
         )
+        if box:
+            box.prop(state, "color_attribute_name")
+            box.prop(state, "color_attribute_domain")
+            box.prop(state, "color_attribute_type")
+            box.prop(state, "replace_color_attribute")
+            box.prop(state, "color_initialize_value")
+            op = box.operator("lcw.color_attribute_initialize")
+            _assign_operator_props(
+                op,
+                {
+                    "attribute_name": state.color_attribute_name,
+                    "domain": state.color_attribute_domain,
+                    "data_type": state.color_attribute_type,
+                    "replace_existing": state.replace_color_attribute,
+                    "color": state.color_initialize_value,
+                },
+            )
 
-        box = _tool_box(layout, "Apply Color")
-        box.prop(state, "color_value")
-        box.prop(state, "color_mask_type")
-        box.prop(state, "color_blend_mode")
-        op = box.operator("lcw.color_attribute_apply")
-        _assign_operator_props(
-            op,
-            {
-                "color": state.color_value,
-                "mask_type": state.color_mask_type,
-                "blend_mode": state.color_blend_mode,
-                "attribute_name": state.color_attribute_name,
-            },
+        box = _draw_collapsible_tool(
+            layout,
+            state,
+            "color_tool_apply_open",
+            "Apply Vertex Colors",
+            icon="VPAINT_HLT",
         )
+        if box:
+            box.label(text=f"Target Attribute: {state.color_attribute_name}", icon="GROUP_VCOL")
+            box.prop(state, "color_value")
+            box.prop(state, "color_mask_type")
+            box.prop(state, "color_blend_mode")
+            op = box.operator("lcw.color_attribute_apply")
+            _assign_operator_props(
+                op,
+                {
+                    "color": state.color_value,
+                    "mask_type": state.color_mask_type,
+                    "blend_mode": state.color_blend_mode,
+                    "attribute_name": state.color_attribute_name,
+                },
+            )
 
 
 class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
@@ -379,29 +364,54 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
         layout = self.layout
         state = wm_state(context)
 
-        box = _tool_box(layout, "UV Channels")
-        box.prop(state, "uv_lightmap_name")
-        op = box.operator("lcw.uv_ensure_second")
-        _assign_operator_props(op, {"lightmap_name": state.uv_lightmap_name})
-        box.prop(state, "uv_channel_number")
-        box.prop(state, "uv_deselect_if_missing")
-        op = box.operator("lcw.uv_set_active_channel")
-        _assign_operator_props(
-            op,
-            {
-                "channel_number": state.uv_channel_number,
-                "deselect_if_missing": state.uv_deselect_if_missing,
-            },
+        box = layout.box()
+        row = box.row(align=True)
+        row.operator("lcw.uv_set_active_1", text="UV1", icon="GROUP_UVS")
+        row.operator("lcw.uv_set_active_2", text="UV2", icon="GROUP_UVS")
+        row.operator("lcw.uv_set_active_3", text="UV3", icon="GROUP_UVS")
+
+        box = _draw_collapsible_tool(
+            layout,
+            state,
+            "uv_tool_add_channel_open",
+            "Add UV Channel",
+            icon="ADD",
         )
-        op = box.operator("lcw.uv_rename_channel")
-        _assign_operator_props(
-            op,
-            {
-                "channel_number": state.uv_channel_number,
-                "new_name": state.uv_lightmap_name,
-                "deselect_if_missing": state.uv_deselect_if_missing,
-            },
+        if box:
+            box.prop(state, "uv_add_channel_target")
+            box.prop(state, "uv_add_channel_name")
+            if state.uv_add_channel_target == "1":
+                op = box.operator("lcw.uv_add_uv1")
+                _assign_operator_props(op, {"channel_name": state.uv_add_channel_name})
+            elif state.uv_add_channel_target == "2":
+                op = box.operator("lcw.uv_add_uv2")
+                _assign_operator_props(op, {"channel_name": state.uv_add_channel_name})
+            else:
+                op = box.operator("lcw.uv_add_uv3")
+                _assign_operator_props(op, {"channel_name": state.uv_add_channel_name})
+
+        box = _draw_collapsible_tool(
+            layout,
+            state,
+            "uv_tool_rename_channels_open",
+            "Rename UV Channels",
+            icon="SORTALPHA",
         )
+        if box:
+            row = box.row(align=True)
+            row.prop(state, "uv_rename_uv1", text="UV1")
+            op = row.operator("lcw.uv_rename_uv1", text="Rename")
+            op.new_name = state.uv_rename_uv1
+
+            row = box.row(align=True)
+            row.prop(state, "uv_rename_uv2", text="UV2")
+            op = row.operator("lcw.uv_rename_uv2", text="Rename")
+            op.new_name = state.uv_rename_uv2
+
+            row = box.row(align=True)
+            row.prop(state, "uv_rename_uv3", text="UV3")
+            op = row.operator("lcw.uv_rename_uv3", text="Rename")
+            op.new_name = state.uv_rename_uv3
 
 
 class LCW_PT_mesh_utilities(LCW_PT_base, bpy.types.Panel):

@@ -43,11 +43,22 @@ class LCW_PG_WorkflowPreset(bpy.types.PropertyGroup):
 
 class LCW_PG_WindowState(bpy.types.PropertyGroup):
     material_name: StringProperty(name="Material", default="cavity_bake_v2")
+    material_quick_name_1: StringProperty(name="Quick Name 1", default="")
+    material_quick_name_2: StringProperty(name="Quick Name 2", default="")
+    material_quick_name_3: StringProperty(name="Quick Name 3", default="")
     face_material_name: StringProperty(name="Face Material", default="00_Config_wood_int")
     color_attribute_name: StringProperty(name="Color Attribute", default="Color")
     color_attribute_domain: EnumProperty(name="Color Domain", items=COLOR_DOMAIN_ITEMS, default="CORNER")
     color_attribute_type: EnumProperty(name="Color Type", items=COLOR_TYPE_ITEMS, default="BYTE_COLOR")
     replace_color_attribute: BoolProperty(name="Replace Existing", default=False)
+    color_initialize_value: FloatVectorProperty(
+        name="Initialize Color",
+        subtype="COLOR",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(0.0, 0.0, 0.0, 1.0),
+    )
     color_mask_type: EnumProperty(name="Mask Type", items=COLOR_MASK_ITEMS, default="FACE")
     color_blend_mode: EnumProperty(name="Blend Mode", items=COLOR_BLEND_ITEMS, default="SET")
     color_value: FloatVectorProperty(
@@ -58,9 +69,20 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
         max=1.0,
         default=(0.0, 0.0, 0.0, 1.0),
     )
-    uv_lightmap_name: StringProperty(name="Second UV Name", default="Lightmap")
-    uv_channel_number: IntProperty(name="UV Channel", default=2, min=1)
     uv_deselect_if_missing: BoolProperty(name="Deselect if Missing", default=True)
+    uv_add_channel_target: EnumProperty(
+        name="Add Channel",
+        items=(
+            ("1", "UV1", "Create or prepare UV1"),
+            ("2", "UV2", "Create or prepare UV2"),
+            ("3", "UV3", "Create or prepare UV3"),
+        ),
+        default="2",
+    )
+    uv_add_channel_name: StringProperty(name="New UV Name", default="Lightmap")
+    uv_rename_uv1: StringProperty(name="UV1 Name", default="UVMap")
+    uv_rename_uv2: StringProperty(name="UV2 Name", default="Lightmap")
+    uv_rename_uv3: StringProperty(name="UV3 Name", default="UV3")
     shape_key_select_fragment: StringProperty(
         name="Name Fragment",
         description="Text used to find the first matching shape key on each selected object",
@@ -91,11 +113,6 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
         description="Comma-separated fragments used to find shape keys to reset",
         default="Width,Height",
     )
-    shape_key_suffix: StringProperty(
-        name="Suffix",
-        description="Suffix added to the detected common prefix when creating a new shape key",
-        default="_v2",
-    )
     shape_key_value: FloatProperty(
         name="Shape Key Value",
         description="Value copied from the active shape key to matching selected objects",
@@ -105,18 +122,18 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     )
     shape_key_animation_names: StringProperty(
         name="Name Fragments",
-        description="Comma-separated fragments used to find shape keys to keyframe",
+        description="Comma-separated fragments used to find shape keys for the temporary preview",
         default="width,height",
     )
     shape_key_animation_start: IntProperty(
         name="Start Frame",
-        description="First frame used for shape key keyframes",
+        description="First frame used for the temporary shape key preview",
         default=1,
         min=0,
     )
     shape_key_animation_end: IntProperty(
         name="End Frame",
-        description="Last frame used for shape key keyframes",
+        description="Last frame used for the temporary shape key preview",
         default=30,
         min=1,
     )
@@ -134,20 +151,23 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
         min=0.0,
         max=1.0,
     )
-    shape_tool_sync_active_open: BoolProperty(name="Sync Active Shape Key", default=True)
+    shape_section_selection_open: BoolProperty(name="Selection Section", default=True)
+    shape_section_naming_open: BoolProperty(name="Naming Section", default=False)
+    shape_section_reset_open: BoolProperty(name="Reset Section", default=False)
+    shape_section_animation_open: BoolProperty(name="Animation Section", default=False)
+    shape_section_advanced_open: BoolProperty(name="Advanced Section", default=False)
     shape_tool_select_by_name_open: BoolProperty(name="Select Shape Key by Name", default=False)
     shape_tool_set_value_open: BoolProperty(name="Set Active Shape Key Value", default=False)
-    shape_tool_copy_names_open: BoolProperty(name="Copy Shape Key Names", default=False)
     shape_tool_add_prefix_open: BoolProperty(name="Add Prefix", default=False)
     shape_tool_replace_text_open: BoolProperty(name="Replace Text", default=False)
-    shape_tool_common_prefix_open: BoolProperty(name="Create from Common Prefix", default=False)
-    shape_tool_zero_values_open: BoolProperty(name="Zero Shape Key Values", default=False)
-    shape_tool_reset_all_open: BoolProperty(name="Reset Shape Keys", default=False)
     shape_tool_reset_matching_open: BoolProperty(name="Reset Matching Shape Keys", default=False)
     shape_tool_deselect_text_open: BoolProperty(name="Deselect by Shape Key Text", default=False)
-    shape_tool_animation_open: BoolProperty(name="Keyframe Shape Keys", default=False)
-    shape_tool_default_keys_open: BoolProperty(name="Ensure Default Keys", default=False)
-    shape_tool_analysis_open: BoolProperty(name="Create Analysis Collections", default=False)
+    shape_tool_animation_open: BoolProperty(name="Preview Shape Keys", default=False)
+    material_tool_assign_faces_open: BoolProperty(name="Assign Material to Faces", default=False)
+    color_tool_initialize_open: BoolProperty(name="Initialize Color Attribute", default=True)
+    color_tool_apply_open: BoolProperty(name="Apply Vertex Colors", default=False)
+    uv_tool_add_channel_open: BoolProperty(name="Add UV Channel", default=False)
+    uv_tool_rename_channels_open: BoolProperty(name="Rename UV Channels", default=False)
     object_offset_y: FloatProperty(name="Y Offset", default=1.0)
     rename_suffix_width: IntProperty(name="Suffix Digits", default=2, min=1, max=6)
     kalibra_export_csv: StringProperty(name="CSV Path", subtype="FILE_PATH", default="")

@@ -36,7 +36,7 @@ def _common_prefix(names: list[str]) -> str:
 class LCW_OT_shape_key_create_default(bpy.types.Operator):
     bl_idname = "lcw.shape_key_create_default"
     bl_label = "Ensure Default Width/Height Keys"
-    bl_description = "Ensures selected mesh objects contain Basis, Width, and Height shape keys"
+    bl_description = "Runs on all selected mesh objects and ensures Basis, Width, and Height shape keys exist, creating any missing defaults"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -55,7 +55,7 @@ class LCW_OT_shape_key_create_default(bpy.types.Operator):
 class LCW_OT_shape_key_match_active(bpy.types.Operator):
     bl_idname = "lcw.shape_key_match_active"
     bl_label = "Sync Active Shape Key Across Selection"
-    bl_description = "Uses the active object's active shape key as the source and sets the same key active on matching selected objects; deselects non-matching objects"
+    bl_description = "Uses the active object's active shape key as the source, applies the same active key to the rest of the selected objects, and deselects objects that do not contain a matching shape key"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -84,7 +84,7 @@ class LCW_OT_shape_key_match_active(bpy.types.Operator):
 class LCW_OT_shape_key_set_value(bpy.types.Operator):
     bl_idname = "lcw.shape_key_set_value"
     bl_label = "Set Active Shape Key Value Across Selection"
-    bl_description = "Uses the active object's active shape key and copies the entered value to matching selected objects; deselects non-matching objects"
+    bl_description = "Uses the active object's active shape key as the source, copies the entered value to matching selected objects, and deselects objects that do not contain a matching shape key"
     bl_options = {"REGISTER", "UNDO"}
 
     value: bpy.props.FloatProperty(
@@ -126,7 +126,7 @@ class LCW_OT_shape_key_set_value(bpy.types.Operator):
 class LCW_OT_shape_key_copy_names(bpy.types.Operator):
     bl_idname = "lcw.shape_key_copy_names"
     bl_label = "Copy Shape Key Names from Active Object"
-    bl_description = "Uses the active object as the source and ensures selected mesh objects contain the same shape key names"
+    bl_description = "Uses the active object as the source and ensures the rest of the selected mesh objects contain the same shape key names"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -152,7 +152,7 @@ class LCW_OT_shape_key_copy_names(bpy.types.Operator):
 class LCW_OT_shape_key_set_active_phrase(bpy.types.Operator):
     bl_idname = "lcw.shape_key_set_active_phrase"
     bl_label = "Select Shape Key by Name Fragment"
-    bl_description = "Finds the first shape key containing the entered text on each selected object and deselects objects without a match"
+    bl_description = "Runs on all selected mesh objects, finds the first shape key containing the entered text, sets it active, and deselects objects without a match"
     bl_options = {"REGISTER", "UNDO"}
 
     phrase: bpy.props.StringProperty(
@@ -189,7 +189,7 @@ class LCW_OT_shape_key_set_active_phrase(bpy.types.Operator):
 class LCW_OT_shape_key_zero_all(bpy.types.Operator):
     bl_idname = "lcw.shape_key_zero_all"
     bl_label = "Zero All Shape Key Values"
-    bl_description = "Sets all shape key values on selected objects to 0.0"
+    bl_description = "Runs on all selected objects that have shape keys and sets every shape key value to 0.0"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -209,7 +209,7 @@ class LCW_OT_shape_key_zero_all(bpy.types.Operator):
 class LCW_OT_shape_key_add_prefix(bpy.types.Operator):
     bl_idname = "lcw.shape_key_add_prefix"
     bl_label = "Add Prefix to Non-Basis Shape Keys"
-    bl_description = "Adds the entered prefix to every non-Basis shape key name on selected objects"
+    bl_description = "Runs on all selected objects and adds the entered prefix to every non-Basis shape key name"
     bl_options = {"REGISTER", "UNDO"}
 
     prefix: bpy.props.StringProperty(
@@ -239,7 +239,7 @@ class LCW_OT_shape_key_add_prefix(bpy.types.Operator):
 class LCW_OT_shape_key_replace_words(bpy.types.Operator):
     bl_idname = "lcw.shape_key_replace_words"
     bl_label = "Replace Text in Non-Basis Shape Key Names"
-    bl_description = "Replaces the search text in non-Basis shape key names on selected objects"
+    bl_description = "Runs on all selected objects and replaces the search text in non-Basis shape key names"
     bl_options = {"REGISTER", "UNDO"}
 
     search_text: bpy.props.StringProperty(
@@ -274,12 +274,15 @@ class LCW_OT_shape_key_replace_words(bpy.types.Operator):
 class LCW_OT_shape_key_reset_all(bpy.types.Operator):
     bl_idname = "lcw.shape_key_reset_all"
     bl_label = "Reset Shape Keys"
-    bl_description = "Rebuilds non-Basis shape keys with the same names so they return to an empty default state"
+    bl_description = "Runs on all selected objects and rebuilds non-Basis shape keys with the same names so they return to an empty default state. This destroys the current non-Basis shape key content and requires confirmation before running"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return bool(_mesh_objects_with_shape_keys(context))
+
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+        return context.window_manager.invoke_confirm(self, event, title="Reset Shape Keys?", confirm_text="Reset")
 
     def execute(self, context: bpy.types.Context):
         reset_count = 0
@@ -297,7 +300,7 @@ class LCW_OT_shape_key_reset_all(bpy.types.Operator):
 class LCW_OT_shape_key_reset_by_phrases(bpy.types.Operator):
     bl_idname = "lcw.shape_key_reset_by_phrases"
     bl_label = "Reset Matching Shape Keys by Name"
-    bl_description = "Recreates non-Basis shape keys whose names contain one of the entered fragments"
+    bl_description = "Runs on all selected objects and recreates non-Basis shape keys whose names contain one of the entered fragments"
     bl_options = {"REGISTER", "UNDO"}
 
     phrases: bpy.props.StringProperty(
@@ -343,7 +346,7 @@ class LCW_OT_shape_key_reset_by_phrases(bpy.types.Operator):
 class LCW_OT_shape_key_deselect_phrase(bpy.types.Operator):
     bl_idname = "lcw.shape_key_deselect_phrase"
     bl_label = "Deselect Objects Containing Shape Key Text"
-    bl_description = "Deselects scene objects whose shape key names contain the entered text"
+    bl_description = "Checks mesh objects in the scene and deselects those whose shape key names contain the entered text"
     bl_options = {"REGISTER", "UNDO"}
 
     phrase: bpy.props.StringProperty(
@@ -374,7 +377,7 @@ class LCW_OT_shape_key_deselect_phrase(bpy.types.Operator):
 class LCW_OT_shape_key_names_check(bpy.types.Operator):
     bl_idname = "lcw.shape_key_names_check"
     bl_label = "Create Analysis Collections from Shape Key Names"
-    bl_description = "Builds helper collections from words found in shape key names so related objects can be inspected"
+    bl_description = "Runs on selected objects with shape keys and builds helper collections from words found in their shape key names so related objects can be inspected"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -436,37 +439,37 @@ class LCW_OT_shape_key_create_auto_prefix(bpy.types.Operator):
 
 class LCW_OT_shape_key_animate_partial(bpy.types.Operator):
     bl_idname = "lcw.shape_key_animate_partial"
-    bl_label = "Keyframe Shape Keys by Name Fragment"
-    bl_description = "Finds shape keys whose names contain the entered fragments and inserts value keyframes across the frame range"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_label = "Preview Shape Keys by Name Fragment"
+    bl_description = "Runs on all selected objects, temporarily previews matching shape keys across the frame range without creating keyframes, then restores the original frame and values"
+    bl_options = {"REGISTER"}
 
     partial_names: bpy.props.StringProperty(
         name="Name Fragments",
-        description="Comma-separated fragments used to find shape keys that should be keyframed",
+        description="Comma-separated fragments used to find shape keys that should be previewed",
         default="width,height",
     )
     start_frame: bpy.props.IntProperty(
         name="Start Frame",
-        description="First frame used for keyframing",
+        description="First frame used for the temporary shape key preview",
         default=1,
         min=0,
     )
     end_frame: bpy.props.IntProperty(
         name="End Frame",
-        description="Last frame used for keyframing",
+        description="Last frame used for the temporary shape key preview",
         default=30,
         min=1,
     )
     min_value: bpy.props.FloatProperty(
         name="Min Value",
-        description="Shape key value used on the first frame",
+        description="Shape key value used at the start of the preview",
         default=0.0,
         min=0.0,
         max=1.0,
     )
     max_value: bpy.props.FloatProperty(
         name="Max Value",
-        description="Shape key value used on the last frame",
+        description="Shape key value used at the end of the preview",
         default=1.0,
         min=0.0,
         max=1.0,
@@ -475,6 +478,55 @@ class LCW_OT_shape_key_animate_partial(bpy.types.Operator):
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return bool(_mesh_objects_with_shape_keys(context))
+
+    def _tag_redraw(self, context: bpy.types.Context) -> None:
+        window = getattr(context, "window", None)
+        screen = window.screen if window else context.screen
+        if screen is None:
+            return
+        for area in screen.areas:
+            area.tag_redraw()
+
+    def _restore_original_state(self, context: bpy.types.Context) -> None:
+        for key_block, original_value in self._original_values:
+            try:
+                key_block.value = original_value
+            except ReferenceError:
+                continue
+        context.scene.frame_set(self._original_frame)
+        self._tag_redraw(context)
+
+    def _finish_preview(self, context: bpy.types.Context, result: str) -> set[str]:
+        if getattr(self, "_timer", None) is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+        self._restore_original_state(context)
+        return {result}
+
+    def _apply_preview_frame(self, context: bpy.types.Context, frame: int) -> None:
+        frame_range = self.end_frame - self.start_frame
+        factor = 0.0 if frame_range == 0 else (frame - self.start_frame) / frame_range
+        value = self.min_value + (self.max_value - self.min_value) * factor
+        context.scene.frame_set(frame)
+        for key_block, _original_value in self._original_values:
+            key_block.value = value
+        self._tag_redraw(context)
+
+    def modal(self, context: bpy.types.Context, event: bpy.types.Event):
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            self.report({"INFO"}, "Shape key preview cancelled and original state restored.")
+            return self._finish_preview(context, "CANCELLED")
+
+        if event.type != "TIMER":
+            return {"PASS_THROUGH"}
+
+        if self._preview_frame > self.end_frame:
+            self.report({"INFO"}, f"Previewed {len(self._original_values)} shape key target(s). Original state restored.")
+            return self._finish_preview(context, "FINISHED")
+
+        self._apply_preview_frame(context, self._preview_frame)
+        self._preview_frame += 1
+        return {"RUNNING_MODAL"}
 
     def execute(self, context: bpy.types.Context):
         if self.end_frame <= self.start_frame:
@@ -498,20 +550,21 @@ class LCW_OT_shape_key_animate_partial(bpy.types.Operator):
             self.report({"WARNING"}, "No matching shape keys found in selection.")
             return {"CANCELLED"}
 
-        frame_range = self.end_frame - self.start_frame
-        for frame in range(self.start_frame, self.end_frame + 1):
-            factor = (frame - self.start_frame) / frame_range
-            value = self.min_value + (self.max_value - self.min_value) * factor
-            context.scene.frame_set(frame)
-            for key_blocks in grouped_keys.values():
-                for key_block in key_blocks:
-                    key_block.value = value
-                    key_block.keyframe_insert(data_path="value", frame=frame)
+        unique_keys: dict[int, bpy.types.ShapeKey] = {}
+        for key_blocks in grouped_keys.values():
+            for key_block in key_blocks:
+                unique_keys[key_block.as_pointer()] = key_block
 
-        context.scene.frame_start = self.start_frame
-        context.scene.frame_end = self.end_frame
-        self.report({"INFO"}, f"Animated {total_keys} shape key target(s).")
-        return {"FINISHED"}
+        self._original_frame = context.scene.frame_current
+        self._original_values = [(key_block, key_block.value) for key_block in unique_keys.values()]
+        self._preview_frame = self.start_frame
+
+        fps = context.scene.render.fps / context.scene.render.fps_base
+        timer_interval = max(0.01, 1.0 / fps) if fps > 0 else 0.04
+        self._timer = context.window_manager.event_timer_add(timer_interval, window=context.window)
+        context.window_manager.modal_handler_add(self)
+        self.report({"INFO"}, f"Starting preview for {len(self._original_values)} shape key target(s).")
+        return {"RUNNING_MODAL"}
 
 
 CLASSES = (
