@@ -12,3 +12,16 @@ blender_version_min = "4.2.0"
 license = [
   "SPDX:GPL-3.0-or-later",
 ]
+
+[permissions]
+files = "Export CSV files and extension packages to disk"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".git/",
+  "dist/",
+  "scripts/",
+  ".gitignore",
+  "README.md",
+]
