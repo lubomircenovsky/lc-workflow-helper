@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bpy
 
-from ..constants import ACTION_MAP
+from ..constants import ACTION_ITEMS, ACTION_MAP
 from ..utils.common import addon_preferences
 
 
@@ -34,7 +34,12 @@ ACTION_ARGUMENTS = {
     "uv.rename_uv1": {"new_name": "text_value"},
     "uv.rename_uv2": {"new_name": "text_value"},
     "uv.rename_uv3": {"new_name": "text_value"},
-    "mesh.offset_y": {"base_offset": "float_value"},
+    "mesh.offset_y": {
+        "base_offset": "float_value",
+        "use_axis_x": "bool_value",
+        "use_axis_y": "bool_value_2",
+        "use_axis_z": "bool_value_3",
+    },
     "mesh.rename_suffix": {"zfill_width": "int_value"},
     "kalibra.export_selection_csv": {"filepath": "filepath_value"},
     "kalibra.create_bbox": {"bbox_name": "text_value", "csv_path": "filepath_value"},
@@ -43,7 +48,13 @@ ACTION_ARGUMENTS = {
         "replace_text": "text_value_2",
         "angle_threshold": "float_value",
     },
-    "kalibra.scale_loops_xz": {"scale_amount": "float_value"},
+    "kalibra.scale_loops_xz": {
+        "scale_amount": "float_value",
+        "space_mode": "space_value",
+        "use_axis_x": "bool_value",
+        "use_axis_y": "bool_value_2",
+        "use_axis_z": "bool_value_3",
+    },
     "kalibra.scale_loops_x": {"scale_amount": "float_value"},
     "kalibra.space_vertices_axis": {"axis": "axis_value", "falloff_power": "float_value"},
 }
@@ -145,8 +156,12 @@ class LCW_OT_workflow_action_add(bpy.types.Operator):
             self.report({"WARNING"}, "Create a preset first.")
             return {"CANCELLED"}
         action = preset.actions.add()
-        action.action_id = next(iter(ACTION_MAP))
+        action.action_id = ACTION_ITEMS[0][0]
         action.text_value = "Color" if action.action_id == "colors.ensure_attribute" else ""
+        if action.action_id == "mesh.offset_y":
+            action.bool_value = False
+            action.bool_value_2 = True
+            action.bool_value_3 = False
         preset.active_action_index = len(preset.actions) - 1
         self.report({"INFO"}, "Added workflow action.")
         return {"FINISHED"}

@@ -15,6 +15,8 @@ class ActionDefinition:
     operator: str
     category: str
     params: tuple[str, ...] = ()
+    allow_preset: bool = True
+    allow_favorite: bool = True
 
 
 ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
@@ -30,6 +32,15 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
     ActionDefinition("shape_keys.reset_by_phrases", "Reset Matching Shape Keys by Name", "lcw.shape_key_reset_by_phrases", "Shape Keys", ("list_value",)),
     ActionDefinition("shape_keys.deselect_phrase", "Deselect Objects Containing Shape Key Text", "lcw.shape_key_deselect_phrase", "Shape Keys", ("text_value",)),
     ActionDefinition("shape_keys.names_check", "Create Analysis Collections from Shape Key Names", "lcw.shape_key_names_check", "Shape Keys"),
+    ActionDefinition(
+        "shape_keys.preview_partial",
+        "Preview Shape Keys by Name Fragment",
+        "lcw.shape_key_animate_partial",
+        "Shape Keys",
+        ("list_value", "int_value", "int_value_2", "float_value", "float_value_2"),
+        False,
+        True,
+    ),
     ActionDefinition("materials.assign_object", "Assign Material to Selected Objects", "lcw.material_assign_object", "Materials", ("text_value",)),
     ActionDefinition("materials.link_slots_data", "Link Slots to Data", "lcw.material_link_slots_data", "Materials"),
     ActionDefinition("materials.link_slots_object", "Link Slots to Object", "lcw.material_link_slots_object", "Materials"),
@@ -47,15 +58,27 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
     ActionDefinition("uv.rename_uv1", "Rename UV1", "lcw.uv_rename_uv1", "UV", ("text_value",)),
     ActionDefinition("uv.rename_uv2", "Rename UV2", "lcw.uv_rename_uv2", "UV", ("text_value",)),
     ActionDefinition("uv.rename_uv3", "Rename UV3", "lcw.uv_rename_uv3", "UV", ("text_value",)),
-    ActionDefinition("mesh.set_data_names", "Set Mesh Data Names", "lcw.mesh_set_data_names", "Mesh Utilities"),
-    ActionDefinition("mesh.clear_custom_normals", "Clear Custom Normals", "lcw.mesh_clear_custom_normals", "Mesh Utilities"),
-    ActionDefinition("mesh.reveal_edit", "Reveal Mesh in Edit Mode", "lcw.mesh_reveal_in_edit_mode", "Mesh Utilities"),
-    ActionDefinition("mesh.offset_y", "Progressive Y Offset", "lcw.mesh_progressive_offset_y", "Mesh Utilities", ("float_value",)),
-    ActionDefinition("mesh.rename_suffix", "Rename Dot Suffix to Underscore", "lcw.object_rename_dot_suffix", "Mesh Utilities", ("int_value",)),
+    ActionDefinition("mesh.set_data_names", "Set Mesh Data Names", "lcw.mesh_set_data_names", "Object and Mesh Utilities"),
+    ActionDefinition("mesh.clear_custom_normals", "Clear Custom Normals", "lcw.mesh_clear_custom_normals", "Object and Mesh Utilities"),
+    ActionDefinition("mesh.reveal_edit", "Reveal Mesh in Edit Mode", "lcw.mesh_reveal_in_edit_mode", "Object and Mesh Utilities"),
+    ActionDefinition(
+        "mesh.offset_y",
+        "Progressive Cursor Offset",
+        "lcw.mesh_progressive_offset_y",
+        "Object and Mesh Utilities",
+        ("float_value", "bool_value", "bool_value_2", "bool_value_3"),
+    ),
+    ActionDefinition("mesh.rename_suffix", "Rename Dot Suffix to Underscore", "lcw.object_rename_dot_suffix", "Object and Mesh Utilities", ("int_value",)),
     ActionDefinition("kalibra.export_selection_csv", "Export Selection Overview to CSV", "lcw.kalibra_export_selection_csv", "Kalibra Tools", ("filepath_value",)),
     ActionDefinition("kalibra.create_bbox", "Create Combined Bounding Box", "lcw.kalibra_create_combined_bbox", "Kalibra Tools", ("text_value", "filepath_value")),
     ActionDefinition("kalibra.create_glass_control", "Create Glass Control Object", "lcw.kalibra_create_glass_control", "Kalibra Tools", ("text_value", "text_value_2", "float_value")),
-    ActionDefinition("kalibra.scale_loops_xz", "Scale Edge Loops in X and Z", "lcw.kalibra_scale_loops_xz", "Kalibra Tools", ("float_value",)),
+    ActionDefinition(
+        "kalibra.scale_loops_xz",
+        "Shrink Edge Loops by Distance",
+        "lcw.kalibra_scale_loops_xz",
+        "Kalibra Tools",
+        ("float_value", "space_value", "bool_value", "bool_value_2", "bool_value_3"),
+    ),
     ActionDefinition("kalibra.scale_loops_x", "Scale Edge Loops in X", "lcw.kalibra_scale_loops_x", "Kalibra Tools", ("float_value",)),
     ActionDefinition("kalibra.space_vertices_axis", "Space Vertices with Axis Falloff", "lcw.kalibra_space_vertices_axis", "Kalibra Tools", ("axis_value", "float_value")),
 )
@@ -63,6 +86,7 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
 ACTION_ITEMS = tuple(
     (definition.action_id, f"{definition.category}: {definition.label}", "")
     for definition in ACTION_DEFINITIONS
+    if definition.allow_preset
 )
 
 ACTION_MAP = {definition.action_id: definition for definition in ACTION_DEFINITIONS}
@@ -96,6 +120,11 @@ AXIS_ITEMS = (
     ("-X", "-X", "Sort by negative X axis"),
     ("-Y", "-Y", "Sort by negative Y axis"),
     ("-Z", "-Z", "Sort by negative Z axis"),
+)
+
+SPACE_MODE_ITEMS = (
+    ("GLOBAL", "Global", "Use world-space axes"),
+    ("LOCAL", "Local", "Use the active object's local axes"),
 )
 
 

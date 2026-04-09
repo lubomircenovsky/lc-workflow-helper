@@ -10,6 +10,7 @@ from ..utils.common import has_selected_mesh_objects, preserved_selection, selec
 class LCW_OT_mesh_set_data_names(bpy.types.Operator):
     bl_idname = "lcw.mesh_set_data_names"
     bl_label = "Set Mesh Data Names"
+    bl_description = "Rename mesh datablocks of selected mesh objects so each datablock matches its object name"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -28,6 +29,7 @@ class LCW_OT_mesh_set_data_names(bpy.types.Operator):
 class LCW_OT_mesh_clear_custom_normals(bpy.types.Operator):
     bl_idname = "lcw.mesh_clear_custom_normals"
     bl_label = "Clear Custom Normals"
+    bl_description = "Clear custom split normals on all selected mesh objects"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -50,6 +52,7 @@ class LCW_OT_mesh_clear_custom_normals(bpy.types.Operator):
 class LCW_OT_mesh_reveal_in_edit_mode(bpy.types.Operator):
     bl_idname = "lcw.mesh_reveal_in_edit_mode"
     bl_label = "Reveal Mesh in Edit Mode"
+    bl_description = "Temporarily enters Edit Mode on each selected mesh object and reveals hidden geometry"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -73,26 +76,43 @@ class LCW_OT_mesh_reveal_in_edit_mode(bpy.types.Operator):
 
 class LCW_OT_mesh_progressive_offset_y(bpy.types.Operator):
     bl_idname = "lcw.mesh_progressive_offset_y"
-    bl_label = "Progressive Y Offset"
+    bl_label = "Progressive Cursor Offset"
+    bl_description = "Move selected mesh objects to the 3D cursor, keep the first object at the cursor, then offset each next object by the step amount on the enabled axes"
     bl_options = {"REGISTER", "UNDO"}
 
-    base_offset: bpy.props.FloatProperty(name="Y Offset", default=1.0)
+    base_offset: bpy.props.FloatProperty(name="Offset Step", default=1.0)
+    use_axis_x: bpy.props.BoolProperty(name="Use X", default=False)
+    use_axis_y: bpy.props.BoolProperty(name="Use Y", default=True)
+    use_axis_z: bpy.props.BoolProperty(name="Use Z", default=False)
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return has_selected_mesh_objects(context)
 
     def execute(self, context: bpy.types.Context):
+        if not any((self.use_axis_x, self.use_axis_y, self.use_axis_z)):
+            self.report({"WARNING"}, "Enable at least one axis for the progressive offset.")
+            return {"CANCELLED"}
+
+        cursor_location = context.scene.cursor.location.copy()
         for index, obj in enumerate(selected_mesh_objects(context)):
-            obj.location.y += self.base_offset * index + 1
+            step = self.base_offset * index
+            obj.location = cursor_location.copy()
+            if self.use_axis_x:
+                obj.location.x += step
+            if self.use_axis_y:
+                obj.location.y += step
+            if self.use_axis_z:
+                obj.location.z += step
         context.view_layer.update()
-        self.report({"INFO"}, "Offset selected objects along Y.")
+        self.report({"INFO"}, "Offset selected objects from the 3D cursor.")
         return {"FINISHED"}
 
 
 class LCW_OT_object_rename_dot_suffix(bpy.types.Operator):
     bl_idname = "lcw.object_rename_dot_suffix"
     bl_label = "Rename Dot Suffix to Underscore"
+    bl_description = "Rename selected objects from Blender's .001 suffix style to underscore numbering and update matching datablock names"
     bl_options = {"REGISTER", "UNDO"}
 
     zfill_width: bpy.props.IntProperty(name="Suffix Digits", default=2, min=1, max=6)

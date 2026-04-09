@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "lc_workflow_helper"
-version = "0.1.0"
+version = "0.2.0"
 name = "LC Workflow helper"
 tagline = "Workflow helpers for LC Blender production tasks"
 maintainer = "Lubomir"

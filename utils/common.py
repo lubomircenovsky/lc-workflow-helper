@@ -12,8 +12,17 @@ def addon_preferences(context: bpy.types.Context) -> bpy.types.AddonPreferences:
     return context.preferences.addons[ADDON_PACKAGE].preferences
 
 
+def is_favorite_action(context: bpy.types.Context, action_id: str) -> bool:
+    state = scene_state(context)
+    return any(item.action_id == action_id for item in state.favorite_actions)
+
+
 def wm_state(context: bpy.types.Context):
     return getattr(context.window_manager, WINDOW_MANAGER_STATE_ID)
+
+
+def scene_state(context: bpy.types.Context):
+    return getattr(context.scene, "lcw_scene_state")
 
 
 def selected_mesh_objects(context: bpy.types.Context) -> list[bpy.types.Object]:

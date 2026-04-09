@@ -8,7 +8,7 @@ import bmesh
 import bpy
 from mathutils import Vector
 
-from ..constants import AXIS_ITEMS
+from ..constants import AXIS_ITEMS, SPACE_MODE_ITEMS
 from ..utils.common import has_selected_mesh_objects, parse_phrase_list, preserved_selection, selected_mesh_objects, set_active_object
 
 
@@ -51,9 +51,58 @@ def _write_csv_row(csv_path: str, header: list[str], row: list[object]) -> None:
         writer.writerow(row)
 
 
+def _shrink_component_by_world_axes(
+    obj: bpy.types.Object,
+    component: set[bmesh.types.BMVert],
+    inset_amount: float,
+    *,
+    space_mode: str,
+    use_axis_x: bool,
+    use_axis_y: bool,
+    use_axis_z: bool,
+) -> bool:
+    enabled_axes = (
+        (0, use_axis_x),
+        (1, use_axis_y),
+        (2, use_axis_z),
+    )
+    if not any(enabled for _axis_index, enabled in enabled_axes):
+        return False
+
+    if space_mode == "LOCAL":
+        source_coords = {vertex: vertex.co.copy() for vertex in component}
+        to_target = lambda vertex, coord: coord.copy()
+    else:
+        source_coords = {vertex: obj.matrix_world @ vertex.co for vertex in component}
+        matrix_world_inv = obj.matrix_world.inverted()
+        to_target = lambda vertex, coord: matrix_world_inv @ coord
+
+    axis_settings: dict[int, tuple[float, float]] = {}
+
+    for axis_index, enabled in enabled_axes:
+        if not enabled:
+            continue
+        values = [coord[axis_index] for coord in source_coords.values()]
+        size = max(values) - min(values)
+        if size <= 0.0 or size < 2 * inset_amount:
+            return False
+        center = (min(values) + max(values)) / 2.0
+        factor = (size - 2 * inset_amount) / size
+        axis_settings[axis_index] = (center, factor)
+
+    for vertex, source_coord in source_coords.items():
+        new_coord = source_coord.copy()
+        for axis_index, (center, factor) in axis_settings.items():
+            new_coord[axis_index] = center + (source_coord[axis_index] - center) * factor
+        vertex.co = to_target(vertex, new_coord)
+
+    return True
+
+
 class LCW_OT_kalibra_export_selection_csv(bpy.types.Operator):
     bl_idname = "lcw.kalibra_export_selection_csv"
     bl_label = "Export Selection Overview to CSV"
+    bl_description = "Export selected mesh objects to a CSV file including object names, non-Basis shape keys, and assigned material names"
     bl_options = {"REGISTER"}
 
     filepath: bpy.props.StringProperty(name="CSV Path", subtype="FILE_PATH")
@@ -109,6 +158,7 @@ class LCW_OT_kalibra_export_selection_csv(bpy.types.Operator):
 class LCW_OT_kalibra_create_combined_bbox(bpy.types.Operator):
     bl_idname = "lcw.kalibra_create_combined_bbox"
     bl_label = "Create Combined Bounding Box"
+    bl_description = "Build a wireframe bounding box around the selected mesh objects and optionally append its dimensions and bounds to a CSV file"
     bl_options = {"REGISTER", "UNDO"}
 
     bbox_name: bpy.props.StringProperty(name="Bounding Box Name", default="Combined_BBox")
@@ -186,6 +236,7 @@ class LCW_OT_kalibra_create_combined_bbox(bpy.types.Operator):
 class LCW_OT_kalibra_create_glass_control(bpy.types.Operator):
     bl_idname = "lcw.kalibra_create_glass_control"
     bl_label = "Create Glass Control Object"
+    bl_description = "Duplicate selected mesh objects, keep only vertices sharper than the angle threshold or open endpoints, then rename the result as a control object"
     bl_options = {"REGISTER", "UNDO"}
 
     search_text: bpy.props.StringProperty(name="Search", default="_Wood")
@@ -243,16 +294,25 @@ class LCW_OT_kalibra_create_glass_control(bpy.types.Operator):
 
 class LCW_OT_kalibra_scale_loops_xz(bpy.types.Operator):
     bl_idname = "lcw.kalibra_scale_loops_xz"
-    bl_label = "Scale Edge Loops in X and Z"
+    bl_label = "Shrink Edge Loops by Distance"
+    bl_description = "Shrink each selected edge-loop component inward by the entered Blender-unit distance on the enabled axes in the chosen global or local space"
     bl_options = {"REGISTER", "UNDO"}
 
     scale_amount: bpy.props.FloatProperty(name="Scale Amount", default=0.002)
+    space_mode: bpy.props.EnumProperty(name="Space", items=SPACE_MODE_ITEMS, default="GLOBAL")
+    use_axis_x: bpy.props.BoolProperty(name="Use X", default=True)
+    use_axis_y: bpy.props.BoolProperty(name="Use Y", default=False)
+    use_axis_z: bpy.props.BoolProperty(name="Use Z", default=True)
 
     @classmethod
     def poll(cls, context: bpy.types.Context) -> bool:
         return bool(context.active_object and context.active_object.type == "MESH" and context.mode == "EDIT_MESH")
 
     def execute(self, context: bpy.types.Context):
+        if not any((self.use_axis_x, self.use_axis_y, self.use_axis_z)):
+            self.report({"WARNING"}, "Enable at least one axis.")
+            return {"CANCELLED"}
+
         obj = context.active_object
         bm = bmesh.from_edit_mesh(obj.data)
         components = _connected_edge_components(bm)
@@ -261,39 +321,33 @@ class LCW_OT_kalibra_scale_loops_xz(bpy.types.Operator):
             return {"CANCELLED"}
 
         processed = 0
+        skipped = 0
         for component in components:
-            global_coords = {vertex: obj.matrix_world @ vertex.co for vertex in component}
-            xs = [coord.x for coord in global_coords.values()]
-            zs = [coord.z for coord in global_coords.values()]
-            width = max(xs) - min(xs)
-            depth = max(zs) - min(zs)
-            if width <= 0.0 or depth <= 0.0 or width < 2 * self.scale_amount or depth < 2 * self.scale_amount:
-                continue
-
-            factor_x = (width - 2 * self.scale_amount) / width
-            factor_z = (depth - 2 * self.scale_amount) / depth
-            center_x = (min(xs) + max(xs)) / 2
-            center_z = (min(zs) + max(zs)) / 2
-
-            for vertex, world_coord in global_coords.items():
-                new_world = Vector(
-                    (
-                        center_x + (world_coord.x - center_x) * factor_x,
-                        world_coord.y,
-                        center_z + (world_coord.z - center_z) * factor_z,
-                    )
-                )
-                vertex.co = obj.matrix_world.inverted() @ new_world
-            processed += 1
+            if _shrink_component_by_world_axes(
+                obj,
+                component,
+                self.scale_amount,
+                space_mode=self.space_mode,
+                use_axis_x=self.use_axis_x,
+                use_axis_y=self.use_axis_y,
+                use_axis_z=self.use_axis_z,
+            ):
+                processed += 1
+            else:
+                skipped += 1
 
         bmesh.update_edit_mesh(obj.data, loop_triangles=True)
-        self.report({"INFO"}, f"Processed {processed} edge loop component(s).")
+        if processed == 0:
+            self.report({"WARNING"}, "No edge loop component could be shrunk with the current distance and axis settings.")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Processed {processed} edge loop component(s), skipped {skipped}.")
         return {"FINISHED"}
 
 
 class LCW_OT_kalibra_scale_loops_x(bpy.types.Operator):
     bl_idname = "lcw.kalibra_scale_loops_x"
     bl_label = "Scale Edge Loops in X"
+    bl_description = "Shrink selected straight line components inward along world X by the entered amount"
     bl_options = {"REGISTER", "UNDO"}
 
     scale_amount: bpy.props.FloatProperty(name="Scale Amount", default=0.002)
@@ -338,6 +392,7 @@ class LCW_OT_kalibra_scale_loops_x(bpy.types.Operator):
 class LCW_OT_kalibra_space_vertices_axis(bpy.types.Operator):
     bl_idname = "lcw.kalibra_space_vertices_axis"
     bl_label = "Space Vertices with Axis Falloff"
+    bl_description = "Redistribute vertices across selected edge-loop components between the end points using the chosen axis order and falloff power"
     bl_options = {"REGISTER", "UNDO"}
 
     axis: bpy.props.EnumProperty(name="Axis", items=AXIS_ITEMS, default="-X")
