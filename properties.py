@@ -3,7 +3,7 @@ from __future__ import annotations
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 
-from .constants import ACTION_ITEMS, AXIS_ITEMS, COLOR_BLEND_ITEMS, COLOR_DOMAIN_ITEMS, COLOR_MASK_ITEMS, COLOR_TYPE_ITEMS, SPACE_MODE_ITEMS, WINDOW_MANAGER_STATE_ID
+from .constants import ACTION_ITEMS, AXIS_ITEMS, COLOR_BLEND_ITEMS, COLOR_DOMAIN_ITEMS, COLOR_MASK_ITEMS, COLOR_TYPE_ITEMS, PANEL_ORDER_DEFAULT, SPACE_MODE_ITEMS, WINDOW_MANAGER_STATE_ID
 
 
 class LCW_PG_WorkflowActionItem(bpy.types.PropertyGroup):
@@ -51,6 +51,7 @@ class LCW_PG_SceneState(bpy.types.PropertyGroup):
     material_quick_name_1: StringProperty(name="Quick Name 1", default="")
     material_quick_name_2: StringProperty(name="Quick Name 2", default="")
     material_quick_name_3: StringProperty(name="Quick Name 3", default="")
+    panel_order: StringProperty(name="Main Category Order", default=",".join(PANEL_ORDER_DEFAULT))
     favorite_actions: CollectionProperty(type=LCW_PG_FavoriteAction)
 
 
@@ -90,6 +91,17 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
         default="2",
     )
     uv_add_channel_name: StringProperty(name="New UV Name", default="Lightmap")
+    uv_remove_channel_target: EnumProperty(
+        name="Remove Channel",
+        items=(
+            ("1", "UV1", "Remove UV1"),
+            ("2", "UV2", "Remove UV2"),
+            ("3", "UV3", "Remove UV3"),
+            ("4", "UV4", "Remove UV4"),
+            ("5", "UV5", "Remove UV5"),
+        ),
+        default="2",
+    )
     uv_rename_uv1: StringProperty(name="UV1 Name", default="UVMap")
     uv_rename_uv2: StringProperty(name="UV2 Name", default="Lightmap")
     uv_rename_uv3: StringProperty(name="UV3 Name", default="UV3")
@@ -173,10 +185,12 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     shape_tool_reset_matching_open: BoolProperty(name="Reset Matching Shape Keys", default=False)
     shape_tool_deselect_text_open: BoolProperty(name="Deselect by Shape Key Text", default=False)
     shape_tool_animation_open: BoolProperty(name="Preview Shape Keys", default=False)
+    root_category_order_open: BoolProperty(name="Main Category Order", default=False)
     material_tool_assign_faces_open: BoolProperty(name="Assign Material to Faces", default=False)
     color_tool_initialize_open: BoolProperty(name="Initialize Color Attribute", default=True)
     color_tool_apply_open: BoolProperty(name="Apply Vertex Colors", default=False)
     uv_tool_add_channel_open: BoolProperty(name="Add UV Channel", default=False)
+    uv_tool_remove_channel_open: BoolProperty(name="Remove UV Channel", default=False)
     uv_tool_rename_channels_open: BoolProperty(name="Rename UV Channels", default=False)
     mesh_section_data_open: BoolProperty(name="Mesh Data Section", default=True)
     mesh_section_object_open: BoolProperty(name="Object Utilities Section", default=True)
@@ -223,5 +237,7 @@ def register_properties() -> None:
 
 
 def unregister_properties() -> None:
-    del bpy.types.Scene.lcw_scene_state
-    del bpy.types.WindowManager.lcw_state
+    if hasattr(bpy.types.Scene, "lcw_scene_state"):
+        delattr(bpy.types.Scene, "lcw_scene_state")
+    if hasattr(bpy.types.WindowManager, WINDOW_MANAGER_STATE_ID):
+        delattr(bpy.types.WindowManager, WINDOW_MANAGER_STATE_ID)

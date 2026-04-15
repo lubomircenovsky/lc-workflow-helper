@@ -3,7 +3,7 @@ from __future__ import annotations
 import bmesh
 import bpy
 
-from ..utils.common import ensure_material, has_selected_mesh_objects, preserved_selection, scene_state, selected_mesh_objects, set_active_object
+from ..utils.common import ensure_material, has_selected_mesh_objects, preserved_selection, scene_state, selected_mesh_objects, set_active_object, wm_state
 
 
 def _set_material_slot_link(context: bpy.types.Context, target_link: str) -> int:
@@ -52,7 +52,7 @@ class LCW_OT_material_use_quick_name(bpy.types.Operator):
     slot_index: bpy.props.IntProperty(name="Quick Slot", default=1, min=1, max=3)
 
     def execute(self, context: bpy.types.Context):
-        state = context.window_manager.lcw_state
+        state = wm_state(context)
         file_state = scene_state(context)
         quick_name = getattr(file_state, f"material_quick_name_{self.slot_index}", "").strip()
         if not quick_name:

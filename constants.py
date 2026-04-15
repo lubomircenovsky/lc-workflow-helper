@@ -127,6 +127,45 @@ SPACE_MODE_ITEMS = (
     ("LOCAL", "Local", "Use the active object's local axes"),
 )
 
+PANEL_ORDER_DEFAULT = (
+    "scene_info",
+    "favorites",
+    "shape_keys",
+    "materials",
+    "colors",
+    "uv",
+    "mesh_utilities",
+    "workflow_presets",
+    "kalibra_tools",
+)
+
+PANEL_LABELS = {
+    "scene_info": "Scene Info",
+    "favorites": "Favorites",
+    "shape_keys": "Shape Keys",
+    "materials": "Materials",
+    "colors": "Colors",
+    "uv": "UV",
+    "mesh_utilities": "Object and Mesh Utilities",
+    "workflow_presets": "Workflow Presets",
+    "kalibra_tools": "Kalibra Tools",
+}
+
+
+def normalize_panel_order(raw_value: str | Iterable[str] | None) -> tuple[str, ...]:
+    if raw_value is None:
+        ordered_keys: list[str] = []
+    elif isinstance(raw_value, str):
+        ordered_keys = [part.strip() for part in raw_value.split(",") if part.strip()]
+    else:
+        ordered_keys = [part for part in raw_value if part]
+
+    filtered = [key for key in ordered_keys if key in PANEL_LABELS]
+    for key in PANEL_ORDER_DEFAULT:
+        if key not in filtered:
+            filtered.append(key)
+    return tuple(filtered)
+
 
 def iter_actions_for_category(category: str) -> Iterable[ActionDefinition]:
     return tuple(definition for definition in ACTION_DEFINITIONS if definition.category == category)

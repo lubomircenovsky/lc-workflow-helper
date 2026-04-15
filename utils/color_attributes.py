@@ -3,6 +3,12 @@ from __future__ import annotations
 import bpy
 
 
+__all__ = (
+    "blend_rgba",
+    "ensure_color_attribute",
+)
+
+
 def ensure_color_attribute(
     mesh: bpy.types.Mesh,
     attribute_name: str,

@@ -171,6 +171,64 @@ class LCW_OT_uv_add_uv3(bpy.types.Operator):
         return bpy.ops.lcw.uv_add_channel("EXEC_DEFAULT", channel_number=3, channel_name=self.channel_name)
 
 
+class LCW_OT_uv_remove_channel(bpy.types.Operator):
+    bl_idname = "lcw.uv_remove_channel"
+    bl_label = "Remove UV Channel"
+    bl_description = "Runs on all selected mesh objects and removes the requested UV channel after confirmation"
+    bl_options = {"REGISTER", "UNDO"}
+
+    channel_number: bpy.props.IntProperty(name="UV Channel", default=2, min=1, max=5)
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return has_selected_mesh_objects(context)
+
+    def invoke(self, context: bpy.types.Context, event: bpy.types.Event):
+        selected_count = len(selected_mesh_objects(context))
+        channel_label = f"UV{self.channel_number}"
+        object_label = "object" if selected_count == 1 else "objects"
+        return context.window_manager.invoke_confirm(
+            self,
+            event,
+            title="Remove UV Channel",
+            message=f"Remove {channel_label} from {selected_count} selected mesh {object_label}?",
+            confirm_text="Remove",
+            icon="WARNING",
+        )
+
+    def execute(self, context: bpy.types.Context):
+        target_index = self.channel_number - 1
+        removed_meshes = 0
+        skipped_objects = 0
+        affected_objects = 0
+        processed_meshes: set[int] = set()
+
+        for obj in selected_mesh_objects(context):
+            uv_layers = obj.data.uv_layers
+            if len(uv_layers) <= target_index:
+                skipped_objects += 1
+                continue
+
+            mesh_pointer = obj.data.as_pointer()
+            if mesh_pointer in processed_meshes:
+                affected_objects += 1
+                continue
+
+            uv_layers.remove(uv_layers[target_index])
+            processed_meshes.add(mesh_pointer)
+            removed_meshes += 1
+            affected_objects += 1
+
+        self.report(
+            {"INFO"},
+            (
+                f"Removed UV{self.channel_number} from {removed_meshes} mesh datablock(s), "
+                f"affecting {affected_objects} object(s); skipped {skipped_objects} object(s)."
+            ),
+        )
+        return {"FINISHED"}
+
+
 class LCW_OT_uv_set_active_1(bpy.types.Operator):
     bl_idname = "lcw.uv_set_active_1"
     bl_label = "Set UV1 Active"
@@ -269,6 +327,7 @@ CLASSES = (
     LCW_OT_uv_add_uv1,
     LCW_OT_uv_add_uv2,
     LCW_OT_uv_add_uv3,
+    LCW_OT_uv_remove_channel,
     LCW_OT_uv_set_active_1,
     LCW_OT_uv_set_active_2,
     LCW_OT_uv_set_active_3,

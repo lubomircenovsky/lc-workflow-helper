@@ -8,6 +8,20 @@ import bpy
 from ..constants import ADDON_PACKAGE, WINDOW_MANAGER_STATE_ID
 
 
+__all__ = (
+    "addon_preferences",
+    "ensure_material",
+    "has_selected_mesh_objects",
+    "is_favorite_action",
+    "parse_phrase_list",
+    "preserved_selection",
+    "scene_state",
+    "selected_mesh_objects",
+    "set_active_object",
+    "wm_state",
+)
+
+
 def addon_preferences(context: bpy.types.Context) -> bpy.types.AddonPreferences:
     return context.preferences.addons[ADDON_PACKAGE].preferences
 
@@ -27,13 +41,6 @@ def scene_state(context: bpy.types.Context):
 
 def selected_mesh_objects(context: bpy.types.Context) -> list[bpy.types.Object]:
     return [obj for obj in context.selected_objects if obj.type == "MESH"]
-
-
-def active_mesh_object(context: bpy.types.Context) -> bpy.types.Object | None:
-    obj = context.active_object
-    if obj and obj.type == "MESH":
-        return obj
-    return None
 
 
 def has_selected_mesh_objects(context: bpy.types.Context) -> bool:
@@ -81,9 +88,3 @@ def ensure_material(material_name: str) -> bpy.types.Material:
 
 def parse_phrase_list(raw_value: str) -> list[str]:
     return [part.strip() for part in raw_value.split(",") if part.strip()]
-
-
-def report_info_lines(operator: bpy.types.Operator, lines: list[str]) -> None:
-    if not lines:
-        return
-    operator.report({"INFO"}, " | ".join(lines[:3]))

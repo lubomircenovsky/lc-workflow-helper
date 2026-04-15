@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import bpy
+from bpy.app.handlers import persistent
 
-from ..constants import ACTION_MAP
+from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
 from ..operators.favorites import favorite_action_available
 from ..utils.common import addon_preferences, is_favorite_action, scene_state, wm_state
 
@@ -10,12 +11,6 @@ from ..utils.common import addon_preferences, is_favorite_action, scene_state, w
 def _assign_operator_props(operator, values: dict) -> None:
     for name, value in values.items():
         setattr(operator, name, value)
-
-
-def _tool_box(layout, title: str):
-    box = layout.box()
-    box.label(text=title)
-    return box
 
 
 def _simple_tool_box(layout: bpy.types.UILayout):
@@ -52,10 +47,6 @@ def _draw_action_button(
         _assign_operator_props(operator, props)
     _draw_favorite_toggle(layout, context, action_id)
     return operator
-
-
-def _format_xyz(values) -> str:
-    return f"X {values[0]:.3f}  Y {values[1]:.3f}  Z {values[2]:.3f}"
 
 
 def _draw_collapsible_section(
@@ -284,6 +275,72 @@ def _draw_favorite_action(
     _draw_favorite_toggle(row, context, definition.action_id)
 
 
+def _stored_panel_order(context: bpy.types.Context | None = None) -> tuple[str, ...]:
+    if context is not None:
+        scene = getattr(context, "scene", None)
+    else:
+        scene = getattr(bpy.context, "scene", None)
+    file_state = getattr(scene, "lcw_scene_state", None)
+    return normalize_panel_order(getattr(file_state, "panel_order", None))
+
+
+def _apply_panel_order() -> None:
+    for bl_order, panel_key in enumerate(_stored_panel_order(), start=1):
+        PANEL_CLASS_MAP[panel_key].bl_order = bl_order
+
+
+def _tag_redraw() -> None:
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return
+    for window in window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            area.tag_redraw()
+
+
+def prepare_register() -> None:
+    _apply_panel_order()
+
+
+def refresh_panel_registration() -> None:
+    _apply_panel_order()
+    for cls in reversed(CLASSES):
+        try:
+            bpy.utils.unregister_class(cls)
+        except RuntimeError:
+            continue
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
+    _tag_redraw()
+
+
+def _refresh_panel_order_timer():
+    refresh_panel_registration()
+    return None
+
+
+@persistent
+def _refresh_panel_order_on_load(_dummy) -> None:
+    refresh_panel_registration()
+
+
+def register_handlers() -> None:
+    if _refresh_panel_order_on_load not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_refresh_panel_order_on_load)
+    if not bpy.app.timers.is_registered(_refresh_panel_order_timer):
+        bpy.app.timers.register(_refresh_panel_order_timer, first_interval=0.1)
+
+
+def unregister_handlers() -> None:
+    if _refresh_panel_order_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_refresh_panel_order_on_load)
+    if bpy.app.timers.is_registered(_refresh_panel_order_timer):
+        bpy.app.timers.unregister(_refresh_panel_order_timer)
+
+
 class LCW_PT_base:
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -295,7 +352,30 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
     bl_label = "LC Workflow helper"
 
     def draw(self, context: bpy.types.Context) -> None:
-        self.layout.label(text="Workflow tools for LC production scenes.")
+        layout = self.layout
+        state = wm_state(context)
+        file_state = scene_state(context)
+
+        layout.label(text="Workflow tools for LC production scenes.")
+        section = _draw_collapsible_section(layout, state, "root_category_order_open", "Main Category Order", icon="SORTSIZE")
+        if section:
+            section.label(text="Use arrows to reorder categories in this .blend file.", icon="INFO")
+            ordered_keys = normalize_panel_order(file_state.panel_order)
+            for index, panel_key in enumerate(ordered_keys):
+                row = section.row(align=True)
+                row.label(text=PANEL_LABELS[panel_key])
+
+                move_up = row.row(align=True)
+                move_up.enabled = index > 0
+                operator = move_up.operator("lcw.main_panel_move", text="", icon="TRIA_UP")
+                operator.panel_key = panel_key
+                operator.direction = "UP"
+
+                move_down = row.row(align=True)
+                move_down.enabled = index < len(ordered_keys) - 1
+                operator = move_down.operator("lcw.main_panel_move", text="", icon="TRIA_DOWN")
+                operator.panel_key = panel_key
+                operator.direction = "DOWN"
 
 
 class LCW_PT_scene_info(LCW_PT_base, bpy.types.Panel):
@@ -717,6 +797,19 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
         box = _draw_collapsible_tool(
             layout,
             state,
+            "uv_tool_remove_channel_open",
+            "Remove UV Channel",
+            icon="TRASH",
+        )
+        if box:
+            box.prop(state, "uv_remove_channel_target")
+            row = box.row(align=True)
+            operator = row.operator("lcw.uv_remove_channel", text="Remove UV Channel", icon="TRASH")
+            operator.channel_number = int(state.uv_remove_channel_target)
+
+        box = _draw_collapsible_tool(
+            layout,
+            state,
             "uv_tool_rename_channels_open",
             "Rename UV Channels",
             icon="SORTALPHA",
@@ -1038,6 +1131,19 @@ class LCW_PT_kalibra_tools(LCW_PT_base, bpy.types.Panel):
                 col = split.column(align=True)
                 col.label(text="20", icon="MESH_GRID")
                 col.label(text="1.8", icon="CURVE_PATH")
+
+
+PANEL_CLASS_MAP = {
+    "scene_info": LCW_PT_scene_info,
+    "favorites": LCW_PT_favorites,
+    "shape_keys": LCW_PT_shape_keys,
+    "materials": LCW_PT_materials,
+    "colors": LCW_PT_colors,
+    "uv": LCW_PT_uv,
+    "mesh_utilities": LCW_PT_mesh_utilities,
+    "workflow_presets": LCW_PT_workflow_presets,
+    "kalibra_tools": LCW_PT_kalibra_tools,
+}
 
 
 CLASSES = (
