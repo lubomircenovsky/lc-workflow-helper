@@ -29,7 +29,7 @@ class LCW_PG_WorkflowActionItem(bpy.types.PropertyGroup):
     filepath_value: StringProperty(name="File Path", subtype="FILE_PATH", default="")
     color_value: FloatVectorProperty(
         name="Color",
-        subtype="COLOR",
+        subtype="COLOR_GAMMA",
         size=4,
         min=0.0,
         max=1.0,
@@ -64,7 +64,7 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     replace_color_attribute: BoolProperty(name="Replace Existing", default=False)
     color_initialize_value: FloatVectorProperty(
         name="Initialize Color",
-        subtype="COLOR",
+        subtype="COLOR_GAMMA",
         size=4,
         min=0.0,
         max=1.0,
@@ -74,7 +74,7 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     color_blend_mode: EnumProperty(name="Blend Mode", items=COLOR_BLEND_ITEMS, default="SET")
     color_value: FloatVectorProperty(
         name="Color",
-        subtype="COLOR",
+        subtype="COLOR_GAMMA",
         size=4,
         min=0.0,
         max=1.0,

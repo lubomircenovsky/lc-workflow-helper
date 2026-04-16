@@ -6,7 +6,22 @@ import bpy
 __all__ = (
     "blend_rgba",
     "ensure_color_attribute",
+    "get_attribute_rgba",
+    "set_attribute_rgba",
 )
+
+
+def get_attribute_rgba(color_value) -> tuple[float, float, float, float]:
+    if hasattr(color_value, "color_srgb"):
+        return tuple(color_value.color_srgb)
+    return tuple(color_value.color)
+
+
+def set_attribute_rgba(color_value, rgba: tuple[float, float, float, float]) -> None:
+    if hasattr(color_value, "color_srgb"):
+        color_value.color_srgb = rgba
+        return
+    color_value.color = rgba
 
 
 def ensure_color_attribute(
@@ -27,7 +42,7 @@ def ensure_color_attribute(
 
     if fill_color is not None:
         for element in existing.data:
-            element.color = fill_color
+            set_attribute_rgba(element, fill_color)
 
     mesh.color_attributes.active_color = existing
     return existing

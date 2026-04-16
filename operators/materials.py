@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import bmesh
 import bpy
+import random
 
 from ..utils.common import ensure_material, has_selected_mesh_objects, preserved_selection, scene_state, selected_mesh_objects, set_active_object, wm_state
 
@@ -80,6 +81,29 @@ class LCW_OT_material_toggle_link(bpy.types.Operator):
                 slot.link = "DATA" if slot.link == "OBJECT" else "OBJECT"
                 toggled += 1
         self.report({"INFO"}, f"Toggled {toggled} material slot link(s).")
+        return {"FINISHED"}
+
+
+class LCW_OT_material_random_active_color(bpy.types.Operator):
+    bl_idname = "lcw.material_random_active_color"
+    bl_label = "Randomize Active Material Color"
+    bl_description = "Sets a random diffuse viewport color on the active material of the active object"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        active_object = context.active_object
+        return bool(active_object and active_object.active_material)
+
+    def execute(self, context: bpy.types.Context):
+        active_object = context.active_object
+        material = active_object.active_material if active_object else None
+        if material is None:
+            self.report({"WARNING"}, "Active object has no active material.")
+            return {"CANCELLED"}
+
+        material.diffuse_color = (random.random(), random.random(), random.random(), 1.0)
+        self.report({"INFO"}, f"Randomized color for material '{material.name}'.")
         return {"FINISHED"}
 
 
@@ -179,6 +203,7 @@ CLASSES = (
     LCW_OT_material_assign_object,
     LCW_OT_material_use_quick_name,
     LCW_OT_material_toggle_link,
+    LCW_OT_material_random_active_color,
     LCW_OT_material_link_slots_data,
     LCW_OT_material_link_slots_object,
     LCW_OT_material_remove_unused_slots,

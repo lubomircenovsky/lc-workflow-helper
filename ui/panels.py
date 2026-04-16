@@ -634,6 +634,8 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
         _draw_action_button(row, context, "materials.link_slots_object", "lcw.material_link_slots_object", icon="OBJECT_DATA")
         row = box.row(align=True)
         _draw_action_button(row, context, "materials.toggle_link", "lcw.material_toggle_link")
+        row = box.row(align=True)
+        _draw_action_button(row, context, "materials.random_active_color", "lcw.material_random_active_color")
 
         box = layout.box()
         for slot_index in range(1, 4):

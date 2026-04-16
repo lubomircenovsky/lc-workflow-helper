@@ -45,6 +45,7 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
     ActionDefinition("materials.link_slots_data", "Link Slots to Data", "lcw.material_link_slots_data", "Materials"),
     ActionDefinition("materials.link_slots_object", "Link Slots to Object", "lcw.material_link_slots_object", "Materials"),
     ActionDefinition("materials.toggle_link", "Toggle Slot Link", "lcw.material_toggle_link", "Materials"),
+    ActionDefinition("materials.random_active_color", "Randomize Active Material Color", "lcw.material_random_active_color", "Materials"),
     ActionDefinition("materials.remove_unused_slots", "Remove Unused Material Slots", "lcw.material_remove_unused_slots", "Materials"),
     ActionDefinition("materials.assign_faces", "Assign Material to Selected Faces", "lcw.material_assign_selected_faces", "Materials", ("text_value",)),
     ActionDefinition("colors.ensure_attribute", "Initialize Color Attribute", "lcw.color_attribute_initialize", "Colors", ("text_value", "color_domain", "color_type", "bool_value", "color_value")),

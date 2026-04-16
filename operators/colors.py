@@ -3,7 +3,7 @@ from __future__ import annotations
 import bpy
 
 from ..constants import COLOR_BLEND_ITEMS, COLOR_DOMAIN_ITEMS, COLOR_MASK_ITEMS, COLOR_TYPE_ITEMS
-from ..utils.color_attributes import blend_rgba, ensure_color_attribute
+from ..utils.color_attributes import blend_rgba, ensure_color_attribute, get_attribute_rgba, set_attribute_rgba
 from ..utils.common import has_selected_mesh_objects, selected_mesh_objects
 
 
@@ -19,7 +19,7 @@ class LCW_OT_color_attribute_initialize(bpy.types.Operator):
     replace_existing: bpy.props.BoolProperty(name="Replace Existing", default=False)
     color: bpy.props.FloatVectorProperty(
         name="Initialize Color",
-        subtype="COLOR",
+        subtype="COLOR_GAMMA",
         size=4,
         min=0.0,
         max=1.0,
@@ -54,7 +54,7 @@ class LCW_OT_color_attribute_apply(bpy.types.Operator):
 
     color: bpy.props.FloatVectorProperty(
         name="Color",
-        subtype="COLOR",
+        subtype="COLOR_GAMMA",
         size=4,
         min=0.0,
         max=1.0,
@@ -96,8 +96,9 @@ class LCW_OT_color_attribute_apply(bpy.types.Operator):
                     updated_vertices.update(polygon.vertices)
 
                 for vertex_index in updated_vertices:
-                    existing = tuple(attribute.data[vertex_index].color)
-                    attribute.data[vertex_index].color = blend_rgba(existing, tuple(self.color), self.blend_mode)
+                    color_value = attribute.data[vertex_index]
+                    existing = get_attribute_rgba(color_value)
+                    set_attribute_rgba(color_value, blend_rgba(existing, tuple(self.color), self.blend_mode))
             else:
                 for polygon in mesh.polygons:
                     use_polygon = False
@@ -109,8 +110,9 @@ class LCW_OT_color_attribute_apply(bpy.types.Operator):
                         continue
 
                     for loop_index in polygon.loop_indices:
-                        existing = tuple(attribute.data[loop_index].color)
-                        attribute.data[loop_index].color = blend_rgba(existing, tuple(self.color), self.blend_mode)
+                        color_value = attribute.data[loop_index]
+                        existing = get_attribute_rgba(color_value)
+                        set_attribute_rgba(color_value, blend_rgba(existing, tuple(self.color), self.blend_mode))
             updated_objects += 1
 
         if original_mode == "EDIT_MESH":
