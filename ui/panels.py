@@ -5,6 +5,7 @@ from bpy.app.handlers import persistent
 
 from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
 from ..operators.favorites import favorite_action_available
+from ..utils.substance_designer_baker import get_export_source
 from ..utils.common import addon_preferences, is_favorite_action, scene_state, wm_state
 
 
@@ -677,6 +678,169 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
         _draw_action_button(row, context, "materials.remove_unused_slots", "lcw.material_remove_unused_slots")
 
 
+class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
+    bl_idname = "LCW_PT_substance_designer_baker"
+    bl_label = "Bakers"
+    bl_parent_id = "LCW_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        file_state = scene_state(context)
+        bake_state = file_state.substance_designer_baker
+        preferences = addon_preferences(context)
+        collection = bake_state.target_collection
+        inspect_export_path = bake_state.last_export_path or "bakers_preview.fbx"
+        export_source = get_export_source(collection, inspect_export_path)
+
+        section = _draw_collapsible_section(layout, bake_state, "scope_section_open", "Scope", icon="OUTLINER_COLLECTION")
+        if section:
+            section.prop(bake_state, "target_collection")
+            row = section.row(align=True)
+            row.prop_search(bake_state, "profile_id", preferences, "baker_profiles", text="Profile", icon="PRESET")
+            row.operator("lcw.baker_profile_apply", text="", icon="IMPORT")
+            row.operator("lcw.baker_profile_capture", text="", icon="EXPORT")
+            selection_box = section.box()
+            selection_box.prop(bake_state, "selection_mode")
+            if bake_state.selection_mode == "ALL_EXCEPT_EXCLUDED":
+                selection_box.prop(bake_state, "excluded_material_pattern")
+            elif bake_state.selection_mode == "MATCHING_MATERIAL_NAME":
+                selection_box.prop(bake_state, "material_name_contains")
+            else:
+                selection_box.prop(bake_state, "excluded_material_exact")
+            section.prop(bake_state, "output_root")
+
+        section = _draw_collapsible_section(layout, bake_state, "export_section_open", "Export", icon="EXPORT")
+        if section:
+            section.label(text=export_source["label"], icon="EXPORT")
+            if export_source["kind"] == "COLLECTION_EXPORTER":
+                section.label(text="Using first configured FBX exporter on the target collection.", icon="CHECKMARK")
+            else:
+                section.label(text="Fallback export uses FBX Units Scale and collection-only export.", icon="INFO")
+
+        section = _draw_collapsible_section(layout, bake_state, "preview_section_open", "Preview", icon="VIEWZOOM")
+        if section:
+            row = section.row(align=True)
+            row.operator("lcw.sdb_validate", icon="CHECKMARK")
+            row.operator("lcw.sdb_preview_targets", icon="RESTRICT_SELECT_OFF")
+            if bake_state.preview_message:
+                section.label(text=bake_state.preview_message, icon="INFO" if bake_state.preview_group_count else "ERROR")
+            stats = section.box()
+            stats.label(text=f"Targets: {bake_state.preview_target_count}")
+            stats.label(text=f"Groups: {bake_state.preview_group_count}")
+            stats.label(text=f"Skipped: {bake_state.preview_skipped_count}")
+            if bake_state.preview_items:
+                preview_box = section.box()
+                for item in list(bake_state.preview_items)[:12]:
+                    icon = "CHECKMARK" if item.included else "ERROR"
+                    row = preview_box.row(align=False)
+                    row.label(text=item.label, icon=icon)
+                    if item.detail:
+                        row.label(text=item.detail)
+
+        section = _draw_collapsible_section(layout, bake_state, "defaults_section_open", "Bakers Default Values", icon="PREFERENCES")
+        if section:
+            row = section.row(align=True)
+            row.label(text="Default Size")
+            size_row = row.row(align=True)
+            size_row.prop(bake_state, "output_size_x", text="")
+            lock_icon = "LOCKED" if bake_state.output_size_locked else "UNLOCKED"
+            size_row.prop(bake_state, "output_size_locked", text="", icon=lock_icon, emboss=True)
+            second_size = size_row.row(align=True)
+            second_size.enabled = not bake_state.output_size_locked
+            second_size.prop(bake_state, "output_size_y", text="")
+
+            row = section.row(align=True)
+            row.label(text="Default Format")
+            row.prop(bake_state, "output_format", text="")
+
+            row = section.row(align=True)
+            row.label(text="Default Anti Alias")
+            row.prop(bake_state, "anti_aliasing", text="")
+
+            row = section.row(align=True)
+            row.label(text="Default UV Set")
+            compact = row.row(align=True)
+            compact.ui_units_x = 4
+            compact.prop(bake_state, "uv_set", text="")
+
+            row = section.row(align=True)
+            row.label(text="Dilation Width (px)")
+            compact = row.row(align=True)
+            compact.ui_units_x = 4
+            compact.prop(bake_state, "padding_radius", text="")
+
+            row = section.row(align=True)
+            row.prop(bake_state, "enable_mip_diffusion", text="Apply Diffusion")
+            row.prop(bake_state, "average_normals", text="Average Normals")
+
+            backend_tokens = []
+            if preferences.substance_baker_backend_sal:
+                backend_tokens.append("SAL")
+            if preferences.substance_baker_backend_sora:
+                backend_tokens.append("SoRa")
+            section.label(text=f"Backends: {','.join(backend_tokens) or 'None'}", icon="CONSOLE")
+
+        section = _draw_collapsible_section(layout, bake_state, "ambient_occlusion_section_open", "Ambient Occlusion", icon="SHADING_RENDERED")
+        if section:
+            section.prop(bake_state, "secondary_sample_count")
+            section.prop(bake_state, "secondary_min_distance")
+            section.prop(bake_state, "secondary_max_distance")
+            section.prop(bake_state, "secondary_normalized_distance")
+            section.prop(bake_state, "secondary_spread_angle")
+            section.prop(bake_state, "secondary_sample_distribution")
+            section.prop(bake_state, "culling_mode")
+            section.prop(bake_state, "secondary_mesh_match_mode", text="Self Occlusion")
+            section.prop(bake_state, "normal_map_path")
+            section.prop(bake_state, "normal_map_space", text="Map Type")
+            section.prop(bake_state, "normal_map_orientation", text="Normal Orientation")
+            section.prop(bake_state, "attenuation")
+            section.prop(bake_state, "enable_ground_plane", text="Ground Plane")
+            if bake_state.enable_ground_plane:
+                section.prop(bake_state, "ground_offset")
+
+            projection_box = section.box()
+            projection_box.label(text="Projection", icon="MOD_SHRINKWRAP")
+            projection_box.prop(bake_state, "projection_max_height")
+            projection_box.prop(bake_state, "projection_max_depth")
+            projection_box.prop(bake_state, "projection_normalized_distance")
+            projection_box.prop(bake_state, "projection_cull_backfaces")
+            projection_box.prop(bake_state, "projection_match_mode")
+            projection_box.prop(bake_state, "projection_hit_strategy")
+            projection_box.prop(bake_state, "skew_correction")
+            projection_box.prop(bake_state, "skew_map_path")
+            projection_box.prop(bake_state, "projection_skew_map_invert")
+            projection_box.prop(bake_state, "projection_offset_map_path")
+
+            high_poly_section = _draw_collapsible_section(section, bake_state, "high_poly_section_open", "Setup High Poly Meshes", icon="MESH_DATA")
+            if high_poly_section:
+                high_poly_section.label(text="v1 executes low definition as high definition.", icon="INFO")
+                disabled_box = high_poly_section.box()
+                disabled_box.label(text="High poly mesh lists and cage inputs are reserved for a future phase.", icon="LOCKED")
+                disabled = disabled_box.column(align=False)
+                disabled.enabled = False
+                disabled.prop(bake_state, "use_cage")
+                disabled.prop(bake_state, "cage_scene_path")
+                disabled.prop(bake_state, "high_scene_paths")
+
+        section = _draw_collapsible_section(layout, bake_state, "actions_section_open", "Bake", icon="PLAY")
+        if section:
+            row = section.row(align=True)
+            row.operator("lcw.sdb_bake_ao", icon="RENDER_STILL")
+            row.enabled = bake_state.job_status != "RUNNING"
+            actions = section.row(align=True)
+            actions.operator("lcw.sdb_open_output_folder", icon="FILE_FOLDER")
+            actions.operator("lcw.sdb_show_last_log", icon="TEXT")
+            status_box = section.box()
+            status_box.label(text=f"Status: {bake_state.job_status}")
+            if bake_state.job_message:
+                status_box.label(text=bake_state.job_message, icon="INFO")
+            if bake_state.last_output_dir:
+                status_box.label(text=f"Output: {bake_state.last_output_dir}", icon="FILE_FOLDER")
+            if bake_state.last_plan_path:
+                status_box.label(text=f"Plan: {bake_state.last_plan_path}", icon="TEXT")
+
+
 class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_colors"
     bl_label = "Colors"
@@ -1140,6 +1304,7 @@ PANEL_CLASS_MAP = {
     "favorites": LCW_PT_favorites,
     "shape_keys": LCW_PT_shape_keys,
     "materials": LCW_PT_materials,
+    "substance_designer_baker": LCW_PT_substance_designer_baker,
     "colors": LCW_PT_colors,
     "uv": LCW_PT_uv,
     "mesh_utilities": LCW_PT_mesh_utilities,
@@ -1154,6 +1319,7 @@ CLASSES = (
     LCW_PT_favorites,
     LCW_PT_shape_keys,
     LCW_PT_materials,
+    LCW_PT_substance_designer_baker,
     LCW_PT_colors,
     LCW_PT_uv,
     LCW_PT_mesh_utilities,

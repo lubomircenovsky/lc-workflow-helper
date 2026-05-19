@@ -128,11 +128,95 @@ SPACE_MODE_ITEMS = (
     ("LOCAL", "Local", "Use the active object's local axes"),
 )
 
+SDB_SELECTION_MODE_ITEMS = (
+    ("ALL_EXCEPT_EXCLUDED", "All Materials Except Excluded", "Bake all material groups except those matching the excluded pattern"),
+    ("MATCHING_MATERIAL_NAME", "Materials With Specific Name", "Bake only material groups whose material names contain the given text"),
+    ("OBJECTS_WITHOUT_MATERIAL", "Objects Without Specific Material", "Bake non-occluder meshes grouped by object name"),
+)
+
+SDB_AA_ITEMS = (
+    ("none", "None", "Do not use supersampling"),
+    ("2x2", "2x2", "Use 2x2 supersampling"),
+    ("4x4", "4x4", "Use 4x4 supersampling"),
+    ("8x8", "8x8", "Use 8x8 supersampling"),
+)
+
+SDB_SIZE_ITEMS = (
+    ("128", "128", "Bake at 128 pixels"),
+    ("256", "256", "Bake at 256 pixels"),
+    ("512", "512", "Bake at 512 pixels"),
+    ("1024", "1024", "Bake at 1024 pixels"),
+    ("2048", "2048", "Bake at 2048 pixels"),
+    ("4096", "4096", "Bake at 4096 pixels"),
+    ("8192", "8192", "Bake at 8192 pixels"),
+)
+
+SDB_FORMAT_ITEMS = (
+    ("png", "png", "Portable Network Graphics"),
+    ("tga", "tga", "Truevision TGA"),
+    ("bmp", "bmp", "Windows Bitmap"),
+    ("tif", "tif", "Tagged Image File Format"),
+    ("jpg", "jpg", "JPEG"),
+    ("exr", "exr", "OpenEXR"),
+)
+
+SDB_HIT_STRATEGY_ITEMS = (
+    ("inward", "Inward cast", "Suited to capture floater geometry"),
+    ("closest_from_source", "Closest from source", "Select the closest low poly point"),
+)
+
+SDB_MATCH_MODE_ITEMS = (
+    ("match_all", "Always", "Use any matching high poly mesh"),
+    ("match_mesh_name", "By Mesh Name", "Only use matching high poly meshes with the same name"),
+)
+
+SDB_DISTRIBUTION_ITEMS = (
+    ("cosine", "Cosine", "Use cosine-weighted ray distribution"),
+    ("uniform", "Uniform", "Use uniform ray distribution"),
+)
+
+SDB_ATTENUATION_ITEMS = (
+    ("none", "None", "Do not attenuate shadowing by distance"),
+    ("smooth", "Smooth", "Apply smooth attenuation by distance"),
+    ("linear", "Linear", "Apply linear attenuation by distance"),
+)
+
+SDB_CULLING_MODE_ITEMS = (
+    ("never", "Never", "Do not ignore backfacing triangles"),
+    ("always", "Always", "Always ignore backfacing triangles"),
+    ("match_mesh_name", "By Suffix", "Ignore backfaces only for meshes with the dedicated suffix"),
+)
+
+SDB_NORMAL_MAP_SPACE_ITEMS = (
+    ("tangent_space", "Tangent space", "Interpret the normal map in tangent space"),
+    ("world_space", "World space", "Interpret the normal map in world space"),
+)
+
+SDB_NORMAL_MAP_ORIENTATION_ITEMS = (
+    ("directx", "DirectX", "Use DirectX normal orientation"),
+    ("opengl", "OpenGL", "Use OpenGL normal orientation"),
+)
+
+SDB_JOB_STATUS_ITEMS = (
+    ("IDLE", "Idle", "No bake job is running"),
+    ("VALID", "Validated", "Settings were validated successfully"),
+    ("PREVIEW_READY", "Preview Ready", "Preview results are available"),
+    ("RUNNING", "Running", "A bake job is running"),
+    ("SUCCEEDED", "Succeeded", "The last bake job completed successfully"),
+    ("FAILED", "Failed", "The last bake job failed"),
+)
+
+SDB_EXPORT_SOURCE_ITEMS = (
+    ("INTERNAL_FBX", "Internal FBX Export", "Use the addon fallback FBX export"),
+    ("COLLECTION_EXPORTER", "Collection Exporter", "Use the first configured FBX exporter on the collection"),
+)
+
 PANEL_ORDER_DEFAULT = (
     "scene_info",
     "favorites",
     "shape_keys",
     "materials",
+    "substance_designer_baker",
     "colors",
     "uv",
     "mesh_utilities",
@@ -145,6 +229,7 @@ PANEL_LABELS = {
     "favorites": "Favorites",
     "shape_keys": "Shape Keys",
     "materials": "Materials",
+    "substance_designer_baker": "Bakers",
     "colors": "Colors",
     "uv": "UV",
     "mesh_utilities": "Object and Mesh Utilities",

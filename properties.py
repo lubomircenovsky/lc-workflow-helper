@@ -3,7 +3,35 @@ from __future__ import annotations
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 
-from .constants import ACTION_ITEMS, AXIS_ITEMS, COLOR_BLEND_ITEMS, COLOR_DOMAIN_ITEMS, COLOR_MASK_ITEMS, COLOR_TYPE_ITEMS, PANEL_ORDER_DEFAULT, SPACE_MODE_ITEMS, WINDOW_MANAGER_STATE_ID
+from .constants import (
+    ACTION_ITEMS,
+    AXIS_ITEMS,
+    COLOR_BLEND_ITEMS,
+    COLOR_DOMAIN_ITEMS,
+    COLOR_MASK_ITEMS,
+    COLOR_TYPE_ITEMS,
+    PANEL_ORDER_DEFAULT,
+    SDB_AA_ITEMS,
+    SDB_ATTENUATION_ITEMS,
+    SDB_CULLING_MODE_ITEMS,
+    SDB_EXPORT_SOURCE_ITEMS,
+    SDB_DISTRIBUTION_ITEMS,
+    SDB_FORMAT_ITEMS,
+    SDB_HIT_STRATEGY_ITEMS,
+    SDB_JOB_STATUS_ITEMS,
+    SDB_MATCH_MODE_ITEMS,
+    SDB_NORMAL_MAP_ORIENTATION_ITEMS,
+    SDB_NORMAL_MAP_SPACE_ITEMS,
+    SDB_SELECTION_MODE_ITEMS,
+    SDB_SIZE_ITEMS,
+    SPACE_MODE_ITEMS,
+    WINDOW_MANAGER_STATE_ID,
+)
+
+
+def _sync_baker_output_size(self, _context: bpy.types.Context | None = None) -> None:
+    if getattr(self, "output_size_locked", False):
+        self.output_size_y = self.output_size_x
 
 
 class LCW_PG_WorkflowActionItem(bpy.types.PropertyGroup):
@@ -47,12 +75,134 @@ class LCW_PG_FavoriteAction(bpy.types.PropertyGroup):
     action_id: StringProperty(name="Action ID", default="")
 
 
+class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
+    profile_id: StringProperty(name="Profile ID", default="")
+    name: StringProperty(name="Profile Name", default="Baker Profile")
+    selection_mode: EnumProperty(name="Selection Mode", items=SDB_SELECTION_MODE_ITEMS, default="ALL_EXCEPT_EXCLUDED")
+    excluded_material_pattern: StringProperty(name="Excluded Material Pattern", default="occluder")
+    material_name_contains: StringProperty(name="Material Name Contains", default="bake")
+    excluded_material_exact: StringProperty(name="Excluded Material", default="_0_occluder")
+    output_size_x: EnumProperty(name="Width", items=SDB_SIZE_ITEMS, default="2048", update=_sync_baker_output_size)
+    output_size_y: EnumProperty(name="Height", items=SDB_SIZE_ITEMS, default="2048")
+    output_size_locked: BoolProperty(name="Lock Output Size", default=True, update=_sync_baker_output_size)
+    output_format: EnumProperty(name="Format", items=SDB_FORMAT_ITEMS, default="png")
+    uv_set: IntProperty(name="UV Set", default=0, min=0)
+    padding_radius: IntProperty(name="Dilation Width (px)", default=2, min=0)
+    enable_mip_diffusion: BoolProperty(name="Apply Diffusion", default=True)
+    anti_aliasing: EnumProperty(name="Anti Alias", items=SDB_AA_ITEMS, default="none")
+    average_normals: BoolProperty(name="Average Normals", default=True)
+    use_lowdef_as_highdef: BoolProperty(name="Use Low Definition As High Definition", default=True)
+    projection_max_height: FloatProperty(name="Max Frontal Distance", default=0.01, min=0.0)
+    projection_max_depth: FloatProperty(name="Max Rear Distance", default=0.01, min=0.0)
+    projection_normalized_distance: BoolProperty(name="Relative To Bounding Box", default=True)
+    projection_cull_backfaces: BoolProperty(name="Ignore Backface", default=True)
+    projection_match_mode: EnumProperty(name="Match", items=SDB_MATCH_MODE_ITEMS, default="match_all")
+    projection_hit_strategy: EnumProperty(name="Hit Selection Strategy", items=SDB_HIT_STRATEGY_ITEMS, default="inward")
+    skew_correction: BoolProperty(name="Use Skew Correction", default=False)
+    skew_map_path: StringProperty(name="Skew Texture", subtype="FILE_PATH", default="")
+    projection_skew_map_invert: BoolProperty(name="Invert Skew Correction", default=False)
+    projection_offset_map_path: StringProperty(name="Offset Map", subtype="FILE_PATH", default="")
+    secondary_sample_count: IntProperty(name="Secondary Rays", default=64, min=1, max=256)
+    secondary_min_distance: FloatProperty(name="Min Occluder Distance", default=0.00001, min=0.0)
+    secondary_max_distance: FloatProperty(name="Max Occluder Distance", default=1.0, min=0.0)
+    secondary_normalized_distance: BoolProperty(name="Relative To Bounding Box", default=True)
+    secondary_spread_angle: FloatProperty(name="Spread Angle", default=180.0, min=0.0, max=180.0)
+    secondary_sample_distribution: EnumProperty(name="Distribution", items=SDB_DISTRIBUTION_ITEMS, default="cosine")
+    culling_mode: EnumProperty(name="Ignore Backface", items=SDB_CULLING_MODE_ITEMS, default="never")
+    secondary_mesh_match_mode: EnumProperty(name="Self Occlusion", items=SDB_MATCH_MODE_ITEMS, default="match_all")
+    normal_map_path: StringProperty(name="Normal Map", subtype="FILE_PATH", default="")
+    normal_map_space: EnumProperty(name="Map Type", items=SDB_NORMAL_MAP_SPACE_ITEMS, default="tangent_space")
+    normal_map_orientation: EnumProperty(name="Normal Orientation", items=SDB_NORMAL_MAP_ORIENTATION_ITEMS, default="directx")
+    attenuation: EnumProperty(name="Attenuation", items=SDB_ATTENUATION_ITEMS, default="linear")
+    enable_ground_plane: BoolProperty(name="Ground Plane", default=False)
+    ground_offset: FloatProperty(name="Ground Plane Offset", default=0.0)
+
+
+class LCW_PG_SDBPreviewItem(bpy.types.PropertyGroup):
+    label: StringProperty(name="Label", default="")
+    detail: StringProperty(name="Detail", default="")
+    item_kind: StringProperty(name="Kind", default="INFO")
+    included: BoolProperty(name="Included", default=True)
+
+
+class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
+    target_collection: PointerProperty(name="Collection", type=bpy.types.Collection)
+    profile_id: StringProperty(name="Profile", default="")
+    selection_mode: EnumProperty(name="Selection Mode", items=SDB_SELECTION_MODE_ITEMS, default="ALL_EXCEPT_EXCLUDED")
+    excluded_material_pattern: StringProperty(name="Excluded Material Pattern", default="occluder")
+    material_name_contains: StringProperty(name="Material Name Contains", default="bake")
+    excluded_material_exact: StringProperty(name="Excluded Material", default="_0_occluder")
+    output_root: StringProperty(name="Output Root", subtype="DIR_PATH", default="")
+    output_size_x: EnumProperty(name="Width", items=SDB_SIZE_ITEMS, default="2048", update=_sync_baker_output_size)
+    output_size_y: EnumProperty(name="Height", items=SDB_SIZE_ITEMS, default="2048")
+    output_size_locked: BoolProperty(name="Lock Output Size", default=True, update=_sync_baker_output_size)
+    output_format: EnumProperty(name="Format", items=SDB_FORMAT_ITEMS, default="png")
+    uv_set: IntProperty(name="UV Set", default=0, min=0)
+    padding_radius: IntProperty(name="Dilation Width (px)", default=2, min=0)
+    enable_mip_diffusion: BoolProperty(name="Apply Diffusion", default=True)
+    anti_aliasing: EnumProperty(name="Anti Alias", items=SDB_AA_ITEMS, default="none")
+    average_normals: BoolProperty(name="Average Normals", default=True)
+    use_lowdef_as_highdef: BoolProperty(name="Use Low Definition As High Definition", default=True)
+    high_scene_paths: StringProperty(name="High Poly Mesh Paths", subtype="FILE_PATH", default="")
+    use_cage: BoolProperty(name="Use Cage", default=False)
+    cage_scene_path: StringProperty(name="Cage Mesh Path", subtype="FILE_PATH", default="")
+    projection_max_height: FloatProperty(name="Max Frontal Distance", default=0.01, min=0.0)
+    projection_max_depth: FloatProperty(name="Max Rear Distance", default=0.01, min=0.0)
+    projection_normalized_distance: BoolProperty(name="Relative To Bounding Box", default=True)
+    projection_cull_backfaces: BoolProperty(name="Ignore Backface", default=True)
+    projection_match_mode: EnumProperty(name="Match", items=SDB_MATCH_MODE_ITEMS, default="match_all")
+    projection_hit_strategy: EnumProperty(name="Hit Selection Strategy", items=SDB_HIT_STRATEGY_ITEMS, default="inward")
+    skew_correction: BoolProperty(name="Use Skew Correction", default=False)
+    skew_map_path: StringProperty(name="Skew Texture", subtype="FILE_PATH", default="")
+    projection_skew_map_invert: BoolProperty(name="Invert Skew Correction", default=False)
+    projection_offset_map_path: StringProperty(name="Offset Map", subtype="FILE_PATH", default="")
+    secondary_sample_count: IntProperty(name="Secondary Rays", default=64, min=1, max=256)
+    secondary_min_distance: FloatProperty(name="Min Occluder Distance", default=0.00001, min=0.0)
+    secondary_max_distance: FloatProperty(name="Max Occluder Distance", default=1.0, min=0.0)
+    secondary_normalized_distance: BoolProperty(name="Relative To Bounding Box", default=True)
+    secondary_spread_angle: FloatProperty(name="Spread Angle", default=180.0, min=0.0, max=180.0)
+    secondary_sample_distribution: EnumProperty(name="Distribution", items=SDB_DISTRIBUTION_ITEMS, default="cosine")
+    culling_mode: EnumProperty(name="Ignore Backface", items=SDB_CULLING_MODE_ITEMS, default="never")
+    secondary_mesh_match_mode: EnumProperty(name="Self Occlusion", items=SDB_MATCH_MODE_ITEMS, default="match_all")
+    normal_map_path: StringProperty(name="Normal Map", subtype="FILE_PATH", default="")
+    normal_map_space: EnumProperty(name="Map Type", items=SDB_NORMAL_MAP_SPACE_ITEMS, default="tangent_space")
+    normal_map_orientation: EnumProperty(name="Normal Orientation", items=SDB_NORMAL_MAP_ORIENTATION_ITEMS, default="directx")
+    attenuation: EnumProperty(name="Attenuation", items=SDB_ATTENUATION_ITEMS, default="linear")
+    enable_ground_plane: BoolProperty(name="Ground Plane", default=False)
+    ground_offset: FloatProperty(name="Ground Plane Offset", default=0.0)
+    export_source_kind: EnumProperty(name="Export Source", items=SDB_EXPORT_SOURCE_ITEMS, default="INTERNAL_FBX")
+    export_source_name: StringProperty(name="Export Source Name", default="")
+    export_source_path: StringProperty(name="Export Source Path", subtype="FILE_PATH", default="")
+    export_source_label: StringProperty(name="Export Source Label", default="")
+    preview_items: CollectionProperty(type=LCW_PG_SDBPreviewItem)
+    preview_target_count: IntProperty(name="Preview Targets", default=0, min=0)
+    preview_group_count: IntProperty(name="Preview Groups", default=0, min=0)
+    preview_skipped_count: IntProperty(name="Preview Skipped", default=0, min=0)
+    preview_message: StringProperty(name="Preview Message", default="")
+    last_export_path: StringProperty(name="Last Export Path", subtype="FILE_PATH", default="")
+    last_output_dir: StringProperty(name="Last Output Directory", subtype="DIR_PATH", default="")
+    last_log_path: StringProperty(name="Last Log Path", subtype="FILE_PATH", default="")
+    last_plan_path: StringProperty(name="Last Plan Path", subtype="FILE_PATH", default="")
+    last_job_id: StringProperty(name="Last Job ID", default="")
+    last_summary: StringProperty(name="Last Summary", default="")
+    job_status: EnumProperty(name="Job Status", items=SDB_JOB_STATUS_ITEMS, default="IDLE")
+    job_message: StringProperty(name="Job Message", default="")
+    export_section_open: BoolProperty(name="Export Section", default=True)
+    preview_section_open: BoolProperty(name="Preview Section", default=True)
+    scope_section_open: BoolProperty(name="Scope Section", default=True)
+    ambient_occlusion_section_open: BoolProperty(name="Ambient Occlusion Section", default=True)
+    high_poly_section_open: BoolProperty(name="Setup High Poly Meshes", default=False)
+    defaults_section_open: BoolProperty(name="Bakers Default Values", default=True)
+    actions_section_open: BoolProperty(name="Bake Actions", default=True)
+
+
 class LCW_PG_SceneState(bpy.types.PropertyGroup):
     material_quick_name_1: StringProperty(name="Quick Name 1", default="")
     material_quick_name_2: StringProperty(name="Quick Name 2", default="")
     material_quick_name_3: StringProperty(name="Quick Name 3", default="")
     panel_order: StringProperty(name="Main Category Order", default=",".join(PANEL_ORDER_DEFAULT))
     favorite_actions: CollectionProperty(type=LCW_PG_FavoriteAction)
+    substance_designer_baker: PointerProperty(type=LCW_PG_SubstanceDesignerBakeState)
 
 
 class LCW_PG_WindowState(bpy.types.PropertyGroup):
@@ -226,6 +376,9 @@ CLASSES = (
     LCW_PG_WorkflowActionItem,
     LCW_PG_WorkflowPreset,
     LCW_PG_FavoriteAction,
+    LCW_PG_BakerProfile,
+    LCW_PG_SDBPreviewItem,
+    LCW_PG_SubstanceDesignerBakeState,
     LCW_PG_SceneState,
     LCW_PG_WindowState,
 )
