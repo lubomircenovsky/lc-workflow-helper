@@ -130,8 +130,8 @@ SPACE_MODE_ITEMS = (
 
 SDB_SELECTION_MODE_ITEMS = (
     ("ALL_EXCEPT_EXCLUDED", "All Materials Except Excluded", "Bake all material groups except those matching the excluded pattern"),
-    ("MATCHING_MATERIAL_NAME", "Materials With Specific Name", "Bake only material groups whose material names contain the given text"),
-    ("OBJECTS_WITHOUT_MATERIAL", "Objects Without Specific Material", "Bake non-occluder meshes grouped by object name"),
+    ("MATERIALS_TOGETHER", "Materials Together", "Bake all meshes and group them by material across all objects"),
+    ("OBJECTS_TOGETHER", "Objects Together", "Bake all meshes and group them by Blender object, including all mesh/material parts"),
 )
 
 SDB_AA_ITEMS = (
@@ -195,6 +195,29 @@ SDB_NORMAL_MAP_SPACE_ITEMS = (
 SDB_NORMAL_MAP_ORIENTATION_ITEMS = (
     ("directx", "DirectX", "Use DirectX normal orientation"),
     ("opengl", "OpenGL", "Use OpenGL normal orientation"),
+)
+
+SDB_OUTPUT_TEXTURE_SPACE_ITEMS = (
+    ("tangent_space", "Tangent space", "Bake tangent-space normal vectors"),
+    ("world_space", "World space", "Bake world-space normal vectors"),
+)
+
+SDB_OUTPUT_TEXTURE_ORIENTATION_ITEMS = (
+    ("directx", "DirectX", "Use DirectX normal orientation"),
+    ("opengl", "OpenGL", "Use OpenGL normal orientation"),
+)
+
+SDB_HEIGHT_NORMALIZATION_ITEMS = (
+    ("low_poly_distance", "Relative to low mesh (per UV tile)", "Normalize height from the low-poly mesh range per UV tile"),
+    ("ray_distance", "Relative to ray distance", "Normalize height using the projection ray distance"),
+    ("min_max", "Relative to min/max", "Normalize height using explicit min/max values"),
+    ("manual", "Manual", "Use the scaling divisor manually"),
+)
+
+SDB_THICKNESS_NORMALIZATION_ITEMS = (
+    ("min_max", "Relative to min/max (per UV tile)", "Normalize thickness using the min/max range per UV tile"),
+    ("ray_distance", "Relative to ray distance", "Normalize thickness using the ray distance"),
+    ("none", "None", "Do not normalize thickness values"),
 )
 
 SDB_JOB_STATUS_ITEMS = (

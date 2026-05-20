@@ -4,6 +4,8 @@ import json
 import re
 import shutil
 import subprocess
+import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -13,14 +15,24 @@ import bpy
 __all__ = (
     "apply_profile_to_bake_state",
     "backend_string",
+    "BAKER_DEFINITIONS",
+    "BAKER_DEFINITION_BY_ID",
+    "BakerDefinition",
     "build_ao_plan",
+    "build_baker_command",
+    "build_bake_plan",
     "build_preview_data",
+    "copy_profile_settings",
     "default_workspace_root",
     "ensure_directory",
+    "ensure_profile_ids",
     "execute_ao_plan",
+    "execute_bake_plan",
     "export_collection_for_baker",
     "find_baked_files",
+    "get_baker_profile_index",
     "get_baker_profile",
+    "get_profile_by_index",
     "get_export_source",
     "parse_baker_info",
     "probe_baker_executable",
@@ -32,7 +44,131 @@ __all__ = (
 )
 
 
+@dataclass(frozen=True)
+class BakerDefinition:
+    baker_id: str
+    label: str
+    cli_type: str
+    output_suffix: str
+    enabled_field: str
+    default_enabled: bool = False
+    parameter_fields: tuple[str, ...] = ()
+
+
+BAKER_DEFINITIONS: tuple[BakerDefinition, ...] = (
+    BakerDefinition(
+        baker_id="ambient_occlusion",
+        label="Ambient Occlusion",
+        cli_type="AmbientOcclusion.Raytraced",
+        output_suffix="ao",
+        enabled_field="baker_enable_ambient_occlusion",
+        default_enabled=True,
+        parameter_fields=(
+            "secondary_sample_count",
+            "secondary_min_distance",
+            "secondary_max_distance",
+            "secondary_normalized_distance",
+            "secondary_spread_angle",
+            "secondary_sample_distribution",
+            "culling_mode",
+            "secondary_mesh_match_mode",
+            "normal_map_path",
+            "normal_map_space",
+            "normal_map_orientation",
+            "attenuation",
+            "enable_ground_plane",
+            "ground_offset",
+        ),
+    ),
+    BakerDefinition(
+        baker_id="bent_normal",
+        label="Bent Normal",
+        cli_type="Normal.BentNormals",
+        output_suffix="bent",
+        enabled_field="baker_enable_bent_normal",
+        parameter_fields=(
+            "bent_secondary_sample_count",
+            "bent_secondary_min_distance",
+            "bent_secondary_max_distance",
+            "bent_secondary_normalized_distance",
+            "bent_secondary_spread_angle",
+            "bent_secondary_sample_distribution",
+            "bent_culling_mode",
+            "bent_secondary_mesh_match_mode",
+            "bent_output_texture_space",
+            "bent_output_texture_orientation",
+        ),
+    ),
+    BakerDefinition(
+        baker_id="curvature",
+        label="Curvature",
+        cli_type="Curvature.Raytraced",
+        output_suffix="curv",
+        enabled_field="baker_enable_curvature",
+        parameter_fields=(
+            "curvature_secondary_sample_count",
+            "curvature_sampling_radius",
+            "curvature_normalized_distance",
+            "curvature_mesh_match_mode",
+            "curvature_normal_map_path",
+            "curvature_normal_map_space",
+            "curvature_normal_map_orientation",
+            "curvature_auto_minmax",
+            "curvature_value_min",
+            "curvature_value_max",
+        ),
+    ),
+    BakerDefinition(
+        baker_id="height",
+        label="Height",
+        cli_type="Height.Raytraced",
+        output_suffix="height",
+        enabled_field="baker_enable_height",
+        parameter_fields=(
+            "height_normalization",
+            "height_divisor",
+        ),
+    ),
+    BakerDefinition(
+        baker_id="normal",
+        label="Normal",
+        cli_type="Normal.Raytraced",
+        output_suffix="normal",
+        enabled_field="baker_enable_normal",
+        parameter_fields=(
+            "normal_output_texture_space",
+            "normal_output_texture_orientation",
+        ),
+    ),
+    BakerDefinition(
+        baker_id="thickness",
+        label="Thickness",
+        cli_type="Thickness.Raytraced",
+        output_suffix="thick",
+        enabled_field="baker_enable_thickness",
+        parameter_fields=(
+            "thickness_secondary_sample_count",
+            "thickness_secondary_min_distance",
+            "thickness_secondary_max_distance",
+            "thickness_secondary_normalized_distance",
+            "thickness_secondary_spread_angle",
+            "thickness_secondary_sample_distribution",
+            "thickness_secondary_mesh_match_mode",
+            "thickness_normalization",
+        ),
+    ),
+)
+
+BAKER_DEFINITION_BY_ID = {definition.baker_id: definition for definition in BAKER_DEFINITIONS}
+
+
 PROFILE_FIELD_NAMES = (
+    "baker_enable_ambient_occlusion",
+    "baker_enable_bent_normal",
+    "baker_enable_curvature",
+    "baker_enable_height",
+    "baker_enable_normal",
+    "baker_enable_thickness",
     "selection_mode",
     "excluded_material_pattern",
     "material_name_contains",
@@ -71,6 +207,38 @@ PROFILE_FIELD_NAMES = (
     "attenuation",
     "enable_ground_plane",
     "ground_offset",
+    "bent_secondary_sample_count",
+    "bent_secondary_min_distance",
+    "bent_secondary_max_distance",
+    "bent_secondary_normalized_distance",
+    "bent_secondary_spread_angle",
+    "bent_secondary_sample_distribution",
+    "bent_culling_mode",
+    "bent_secondary_mesh_match_mode",
+    "bent_output_texture_space",
+    "bent_output_texture_orientation",
+    "curvature_secondary_sample_count",
+    "curvature_sampling_radius",
+    "curvature_normalized_distance",
+    "curvature_mesh_match_mode",
+    "curvature_normal_map_path",
+    "curvature_normal_map_space",
+    "curvature_normal_map_orientation",
+    "curvature_auto_minmax",
+    "curvature_value_min",
+    "curvature_value_max",
+    "height_normalization",
+    "height_divisor",
+    "normal_output_texture_space",
+    "normal_output_texture_orientation",
+    "thickness_secondary_sample_count",
+    "thickness_secondary_min_distance",
+    "thickness_secondary_max_distance",
+    "thickness_secondary_normalized_distance",
+    "thickness_secondary_spread_angle",
+    "thickness_secondary_sample_distribution",
+    "thickness_secondary_mesh_match_mode",
+    "thickness_normalization",
 )
 
 
@@ -142,21 +310,42 @@ def probe_baker_executable(executable_path: str) -> tuple[bool, str]:
     return True, result.stdout.strip() or result.stderr.strip() or executable.name
 
 
-def get_baker_profile(preferences, profile_id: str):
+def ensure_profile_ids(preferences) -> None:
+    used_ids: set[str] = set()
+    for profile in getattr(preferences, "baker_profiles", ()):
+        profile_id = getattr(profile, "profile_id", "").strip()
+        if not profile_id or profile_id in used_ids:
+            profile_id = uuid.uuid4().hex
+            profile.profile_id = profile_id
+        used_ids.add(profile_id)
+
+
+def get_baker_profile_index(preferences, profile_id: str) -> int:
+    ensure_profile_ids(preferences)
     if not profile_id:
-        return None
-    for profile in getattr(preferences, "baker_profiles", ()):
+        return -1
+    for index, profile in enumerate(getattr(preferences, "baker_profiles", ())):
         if profile.profile_id == profile_id:
-            return profile
-    for profile in getattr(preferences, "baker_profiles", ()):
+            return index
+    for index, profile in enumerate(getattr(preferences, "baker_profiles", ())):
         if profile.name == profile_id:
-            return profile
-    return None
+            return index
+    return -1
 
 
-def apply_profile_to_bake_state(profile, state) -> None:
-    for field_name in PROFILE_FIELD_NAMES:
-        setattr(state, field_name, getattr(profile, field_name))
+def get_baker_profile(preferences, profile_id: str):
+    profile_index = get_baker_profile_index(preferences, profile_id)
+    return get_profile_by_index(preferences, profile_index)
+
+
+def get_profile_by_index(preferences, index: int):
+    ensure_profile_ids(preferences)
+    profiles = getattr(preferences, "baker_profiles", ())
+    if not profiles:
+        return None
+    if index < 0 or index >= len(profiles):
+        return None
+    return profiles[index]
 
 
 def _is_fbx_exporter(exporter) -> bool:
@@ -371,99 +560,95 @@ def parse_baker_info(raw_output: str) -> list[dict[str, str]]:
     return meshes
 
 
+def _normalized_selection_mode(selection_mode: str) -> str:
+    legacy_map = {
+        "MATCHING_MATERIAL_NAME": "MATERIALS_TOGETHER",
+        "OBJECTS_WITHOUT_MATERIAL": "OBJECTS_TOGETHER",
+    }
+    return legacy_map.get(selection_mode, selection_mode)
+
+
+def copy_profile_settings(source, target) -> None:
+    for field_name in PROFILE_FIELD_NAMES:
+        value = getattr(source, field_name)
+        if field_name == "selection_mode":
+            value = _normalized_selection_mode(value)
+        setattr(target, field_name, value)
+
+
+def apply_profile_to_bake_state(profile, state) -> None:
+    copy_profile_settings(profile, state)
+
+
+def _enabled_baker_definitions(state) -> list[BakerDefinition]:
+    return [
+        definition
+        for definition in BAKER_DEFINITIONS
+        if bool(getattr(state, definition.enabled_field, definition.default_enabled))
+    ]
+
+
+def _build_preview_groups(
+    target_meshes: list[dict[str, str]],
+    *,
+    group_key: str,
+    item_kind: str,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    preview_items: list[dict[str, object]] = []
+    groups: list[dict[str, object]] = []
+    group_map: dict[str, list[dict[str, str]]] = {}
+
+    for mesh in target_meshes:
+        group_map.setdefault(mesh[group_key], []).append(mesh)
+
+    for group_name, grouped_meshes in sorted(group_map.items()):
+        preview_items.append(
+            {
+                "label": group_name,
+                "detail": f"{len(grouped_meshes)} mesh(es)",
+                "item_kind": item_kind,
+                "included": True,
+            }
+        )
+        groups.append(
+            {
+                "group_name": group_name,
+                "output_suffix": sanitize_filename(group_name),
+                "selected_meshes": sorted({mesh["MeshPath"] for mesh in grouped_meshes}),
+                "group_kind": item_kind,
+            }
+        )
+
+    return preview_items, groups
+
+
 def build_preview_data(meshes: list[dict[str, str]], state) -> dict[str, object]:
+    selection_mode = _normalized_selection_mode(getattr(state, "selection_mode", "ALL_EXCEPT_EXCLUDED"))
     skipped = 0
     preview_items: list[dict[str, object]] = []
     groups: list[dict[str, object]] = []
     target_meshes: list[dict[str, str]] = []
 
-    if state.selection_mode == "ALL_EXCEPT_EXCLUDED":
+    if selection_mode == "ALL_EXCEPT_EXCLUDED":
         for mesh in meshes:
             include = state.excluded_material_pattern.lower() not in mesh["MaterialId"].lower()
             if include:
                 target_meshes.append(mesh)
             else:
                 skipped += 1
-        group_map: dict[str, list[dict[str, str]]] = {}
-        for mesh in target_meshes:
-            group_map.setdefault(mesh["MaterialId"], []).append(mesh)
-        for material_id, material_meshes in sorted(group_map.items()):
-            preview_items.append(
-                {
-                    "label": material_id,
-                    "detail": f"{len(material_meshes)} mesh(es)",
-                    "item_kind": "MATERIAL",
-                    "included": True,
-                }
-            )
-            groups.append(
-                {
-                    "group_name": material_id,
-                    "output_suffix": sanitize_filename(material_id),
-                    "selected_meshes": sorted({mesh["MeshPath"] for mesh in material_meshes}),
-                    "group_kind": "MATERIAL",
-                }
-            )
-    elif state.selection_mode == "MATCHING_MATERIAL_NAME":
-        for mesh in meshes:
-            include = state.material_name_contains.lower() in mesh["MaterialId"].lower()
-            if include:
-                target_meshes.append(mesh)
-            else:
-                skipped += 1
-        group_map: dict[str, list[dict[str, str]]] = {}
-        for mesh in target_meshes:
-            group_map.setdefault(mesh["MaterialId"], []).append(mesh)
-        for material_id, material_meshes in sorted(group_map.items()):
-            preview_items.append(
-                {
-                    "label": material_id,
-                    "detail": f"{len(material_meshes)} mesh(es)",
-                    "item_kind": "MATERIAL",
-                    "included": True,
-                }
-            )
-            groups.append(
-                {
-                    "group_name": material_id,
-                    "output_suffix": sanitize_filename(material_id),
-                    "selected_meshes": sorted({mesh["MeshPath"] for mesh in material_meshes}),
-                    "group_kind": "MATERIAL",
-                }
-            )
+        preview_items, groups = _build_preview_groups(target_meshes, group_key="MaterialId", item_kind="MATERIAL")
+    elif selection_mode == "OBJECTS_TOGETHER":
+        target_meshes = list(meshes)
+        preview_items, groups = _build_preview_groups(target_meshes, group_key="ObjectName", item_kind="OBJECT")
     else:
-        for mesh in meshes:
-            include = mesh["MaterialId"] != state.excluded_material_exact
-            if include:
-                target_meshes.append(mesh)
-            else:
-                skipped += 1
-        group_map: dict[str, list[dict[str, str]]] = {}
-        for mesh in target_meshes:
-            group_map.setdefault(mesh["ObjectName"], []).append(mesh)
-        for object_name, object_meshes in sorted(group_map.items()):
-            preview_items.append(
-                {
-                    "label": object_name,
-                    "detail": f"{len(object_meshes)} mesh(es)",
-                    "item_kind": "OBJECT",
-                    "included": True,
-                }
-            )
-            groups.append(
-                {
-                    "group_name": object_name,
-                    "output_suffix": sanitize_filename(object_name),
-                    "selected_meshes": sorted({mesh["MeshPath"] for mesh in object_meshes}),
-                    "group_kind": "OBJECT",
-                }
-            )
+        target_meshes = list(meshes)
+        preview_items, groups = _build_preview_groups(target_meshes, group_key="MaterialId", item_kind="MATERIAL")
 
     if not groups:
         preview_items.append(
             {
                 "label": "No bake targets found",
-                "detail": "Check selection mode and filter values.",
+                "detail": "Check the selection mode and exported baker mesh data.",
                 "item_kind": "WARNING",
                 "included": False,
             }
@@ -479,7 +664,7 @@ def build_preview_data(meshes: list[dict[str, str]], state) -> dict[str, object]
     }
 
 
-def build_ao_plan(
+def build_bake_plan(
     scene_name: str,
     fbx_path: str | Path,
     output_dir: str | Path,
@@ -524,16 +709,12 @@ def build_ao_plan(
         "offset_map_path": state.projection_offset_map_path,
     }
     bakers = []
+    enabled_bakers = _enabled_baker_definitions(state)
     for group in groups:
-        bakers.append(
-            {
-                "Name": "ambient_occlusion",
-                "Type": "AmbientOcclusion.Raytraced",
-                "SceneName": scene_name,
-                "GroupName": group["group_name"],
-                "OutputName": f"{sanitize_filename(scene_name)}_{group['output_suffix']}",
-                "SelectedMeshes": list(group["selected_meshes"]),
-                "Parameters": {
+        for baker_definition in enabled_bakers:
+            parameters: dict[str, object] = {}
+            if baker_definition.baker_id == "ambient_occlusion":
+                parameters = {
                     "secondary.sample_count": state.secondary_sample_count,
                     "secondary.min_distance": state.secondary_min_distance,
                     "secondary.max_distance": state.secondary_max_distance,
@@ -548,17 +729,83 @@ def build_ao_plan(
                     "attenuation": state.attenuation,
                     "enable_ground_plane": state.enable_ground_plane,
                     "ground_offset": state.ground_offset,
-                },
-            }
-        )
+                }
+            elif baker_definition.baker_id == "bent_normal":
+                parameters = {
+                    "secondary.sample_count": state.bent_secondary_sample_count,
+                    "secondary.min_distance": state.bent_secondary_min_distance,
+                    "secondary.max_distance": state.bent_secondary_max_distance,
+                    "secondary.normalized_distance": state.bent_secondary_normalized_distance,
+                    "secondary.sample_distribution": state.bent_secondary_sample_distribution,
+                    "secondary.spread_angle": state.bent_secondary_spread_angle,
+                    "culling_mode": state.bent_culling_mode,
+                    "secondary.mesh_match_mode": state.bent_secondary_mesh_match_mode,
+                    "output_texture_space": state.bent_output_texture_space,
+                    "output_texture_orientation": state.bent_output_texture_orientation,
+                }
+            elif baker_definition.baker_id == "curvature":
+                parameters = {
+                    "secondary.sample_count": state.curvature_secondary_sample_count,
+                    "secondary.sampling_radius": state.curvature_sampling_radius,
+                    "secondary.normalized_distance": state.curvature_normalized_distance,
+                    "secondary.mesh_match_mode": state.curvature_mesh_match_mode,
+                    "normal_map_path": state.curvature_normal_map_path,
+                    "normal_map_space": state.curvature_normal_map_space,
+                    "normal_map_orientation": state.curvature_normal_map_orientation,
+                    "auto_minmax": state.curvature_auto_minmax,
+                    "value_min": state.curvature_value_min,
+                    "value_max": state.curvature_value_max,
+                }
+            elif baker_definition.baker_id == "height":
+                parameters = {
+                    "maximize_range": state.height_normalization,
+                    "divisor": state.height_divisor,
+                }
+            elif baker_definition.baker_id == "normal":
+                parameters = {
+                    "output_texture_space": state.normal_output_texture_space,
+                    "output_texture_orientation": state.normal_output_texture_orientation,
+                }
+            elif baker_definition.baker_id == "thickness":
+                parameters = {
+                    "secondary.sample_count": state.thickness_secondary_sample_count,
+                    "secondary.min_distance": state.thickness_secondary_min_distance,
+                    "secondary.max_distance": state.thickness_secondary_max_distance,
+                    "secondary.normalized_distance": state.thickness_secondary_normalized_distance,
+                    "secondary.sample_distribution": state.thickness_secondary_sample_distribution,
+                    "secondary.spread_angle": state.thickness_secondary_spread_angle,
+                    "secondary.mesh_match_mode": state.thickness_secondary_mesh_match_mode,
+                    "maximize_range": state.thickness_normalization,
+                }
+            bakers.append(
+                {
+                    "Name": baker_definition.baker_id,
+                    "Label": baker_definition.label,
+                    "Type": baker_definition.cli_type,
+                    "BakerSuffix": baker_definition.output_suffix,
+                    "SceneName": scene_name,
+                    "GroupName": group["group_name"],
+                    "OutputName": (
+                        f"{sanitize_filename(scene_name)}_"
+                        f"{group['output_suffix']}__{baker_definition.output_suffix}"
+                    ),
+                    "SelectedMeshes": list(group["selected_meshes"]),
+                    "Parameters": parameters,
+                }
+            )
 
     return {
         "Generator": "LC Workflow helper",
-        "GeneratorVersion": "0.2.2",
+        "GeneratorVersion": "0.3.0",
         "Common": common,
         "CommonProjection": common_projection,
+        "EnabledBakers": [definition.baker_id for definition in enabled_bakers],
         "Bakers": bakers,
     }
+
+
+def build_ao_plan(*args, **kwargs) -> dict[str, object]:
+    return build_bake_plan(*args, **kwargs)
 
 
 def write_json_file(path: str | Path, data: dict[str, object]) -> Path:
@@ -568,10 +815,35 @@ def write_json_file(path: str | Path, data: dict[str, object]) -> Path:
     return path
 
 
-def _bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+def _append_secondary_ray_args(command: list[str], parameters: dict[str, object]) -> None:
+    command.extend(
+        [
+            "--secondary.sample_count",
+            str(parameters["secondary.sample_count"]),
+            "--secondary.min_distance",
+            str(parameters["secondary.min_distance"]),
+            "--secondary.max_distance",
+            str(parameters["secondary.max_distance"]),
+            "--secondary.normalized_distance",
+            "true" if parameters["secondary.normalized_distance"] else "false",
+            "--secondary.sample_distribution",
+            parameters["secondary.sample_distribution"],
+            "--secondary.spread_angle",
+            str(parameters["secondary.spread_angle"]),
+        ]
+    )
+
+
+def _append_normal_map_args(command: list[str], parameters: dict[str, object]) -> None:
+    if parameters["normal_map_path"]:
+        command.extend(["--normal_map_path", parameters["normal_map_path"]])
+        command.extend(["--normal_map_space", parameters["normal_map_space"]])
+        command.extend(["--normal_map_orientation", parameters["normal_map_orientation"]])
+
+
+def _base_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
     common = plan["Common"]
     projection = plan["CommonProjection"]
-    parameters = baker_entry["Parameters"]
     command: list[str] = [
         baker_entry["Type"],
         "--use_lowdef_as_highdef",
@@ -614,28 +886,6 @@ def _bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, obje
         "true" if projection["skew_correction"] else "false",
         "--projection.skew_map_invert",
         "true" if projection["skew_map_invert"] else "false",
-        "--secondary.sample_count",
-        str(parameters["secondary.sample_count"]),
-        "--secondary.min_distance",
-        str(parameters["secondary.min_distance"]),
-        "--secondary.max_distance",
-        str(parameters["secondary.max_distance"]),
-        "--secondary.normalized_distance",
-        "true" if parameters["secondary.normalized_distance"] else "false",
-        "--secondary.sample_distribution",
-        parameters["secondary.sample_distribution"],
-        "--secondary.spread_angle",
-        str(parameters["secondary.spread_angle"]),
-        "--culling_mode",
-        parameters["culling_mode"],
-        "--secondary.mesh_match_mode",
-        parameters["secondary.mesh_match_mode"],
-        "--attenuation",
-        parameters["attenuation"],
-        "--enable_ground_plane",
-        "true" if parameters["enable_ground_plane"] else "false",
-        "--ground_offset",
-        str(parameters["ground_offset"]),
     ]
 
     if common["keep_meshes_in_cache"]:
@@ -646,10 +896,6 @@ def _bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, obje
         command.extend(["--projection.skew_map_path", projection["skew_map_path"]])
     if projection["offset_map_path"]:
         command.extend(["--projection.offset_map_path", projection["offset_map_path"]])
-    if parameters["normal_map_path"]:
-        command.extend(["--normal_map_path", parameters["normal_map_path"]])
-        command.extend(["--normal_map_space", parameters["normal_map_space"]])
-        command.extend(["--normal_map_orientation", parameters["normal_map_orientation"]])
 
     for mesh_path in baker_entry["SelectedMeshes"]:
         command.extend(["--selected_meshes", mesh_path])
@@ -657,7 +903,133 @@ def _bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, obje
     return command
 
 
-def execute_ao_plan(plan: dict[str, object], executable_path: str, log_path: str | Path) -> dict[str, object]:
+def _ao_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    _append_secondary_ray_args(command, parameters)
+    command.extend(
+        [
+            "--culling_mode",
+            parameters["culling_mode"],
+            "--secondary.mesh_match_mode",
+            parameters["secondary.mesh_match_mode"],
+            "--attenuation",
+            parameters["attenuation"],
+            "--enable_ground_plane",
+            "true" if parameters["enable_ground_plane"] else "false",
+            "--ground_offset",
+            str(parameters["ground_offset"]),
+        ]
+    )
+    _append_normal_map_args(command, parameters)
+    return command
+
+
+def _bent_normal_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    _append_secondary_ray_args(command, parameters)
+    command.extend(
+        [
+            "--culling_mode",
+            parameters["culling_mode"],
+            "--secondary.mesh_match_mode",
+            parameters["secondary.mesh_match_mode"],
+            "--output_texture_space",
+            parameters["output_texture_space"],
+            "--output_texture_orientation",
+            parameters["output_texture_orientation"],
+        ]
+    )
+    return command
+
+
+def _curvature_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    command.extend(
+        [
+            "--secondary.sample_count",
+            str(parameters["secondary.sample_count"]),
+            "--secondary.sampling_radius",
+            str(parameters["secondary.sampling_radius"]),
+            "--secondary.normalized_distance",
+            "true" if parameters["secondary.normalized_distance"] else "false",
+            "--secondary.mesh_match_mode",
+            parameters["secondary.mesh_match_mode"],
+            "--auto_minmax",
+            "true" if parameters["auto_minmax"] else "false",
+        ]
+    )
+    if not parameters["auto_minmax"]:
+        command.extend(["--value_bounds", f"{parameters['value_min']},{parameters['value_max']}"])
+    _append_normal_map_args(command, parameters)
+    return command
+
+
+def _height_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    command.extend(
+        [
+            "--maximize_range",
+            parameters["maximize_range"],
+        ]
+    )
+    if parameters["maximize_range"] == "manual":
+        command.extend(["--divisor", str(parameters["divisor"])])
+    return command
+
+
+def _normal_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    command.extend(
+        [
+            "--output_texture_space",
+            parameters["output_texture_space"],
+            "--output_texture_orientation",
+            parameters["output_texture_orientation"],
+        ]
+    )
+    return command
+
+
+def _thickness_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    parameters = baker_entry["Parameters"]
+    command = _base_bake_command_from_plan(plan, baker_entry)
+    _append_secondary_ray_args(command, parameters)
+    command.extend(
+        [
+            "--secondary.mesh_match_mode",
+            parameters["secondary.mesh_match_mode"],
+            "--maximize_range",
+            parameters["maximize_range"],
+        ]
+    )
+    return command
+
+
+def _bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    builders = {
+        "ambient_occlusion": _ao_bake_command_from_plan,
+        "bent_normal": _bent_normal_bake_command_from_plan,
+        "curvature": _curvature_bake_command_from_plan,
+        "height": _height_bake_command_from_plan,
+        "normal": _normal_bake_command_from_plan,
+        "thickness": _thickness_bake_command_from_plan,
+    }
+    try:
+        return builders[baker_entry["Name"]](plan, baker_entry)
+    except KeyError as exc:
+        raise ValueError(f"Unsupported baker type: {baker_entry['Name']}") from exc
+
+
+def build_baker_command(plan: dict[str, object], baker_entry: dict[str, object]) -> list[str]:
+    return _bake_command_from_plan(plan, baker_entry)
+
+
+def execute_bake_plan(plan: dict[str, object], executable_path: str, log_path: str | Path) -> dict[str, object]:
     log_lines: list[str] = []
     output_dir = Path(plan["Common"]["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -675,18 +1047,26 @@ def execute_ao_plan(plan: dict[str, object], executable_path: str, log_path: str
             log_lines.append(result.stderr.rstrip())
         if result.returncode != 0:
             success = False
-            failure_message = f"Bake failed for group '{baker_entry['GroupName']}'."
+            failure_message = f"Bake failed for '{baker_entry['Label']}' group '{baker_entry['GroupName']}'."
             break
         baked_files.extend(find_baked_files(output_dir, baker_entry["OutputName"]))
 
     Path(log_path).write_text("\n\n".join(part for part in log_lines if part), encoding="utf-8")
     return {
         "success": success,
-        "message": "AO bake completed successfully." if success else failure_message or "AO bake failed.",
+        "message": (
+            f"Bake completed successfully ({len(baked_files)} file(s) detected)."
+            if success
+            else failure_message or "Bake failed."
+        ),
         "baked_files": baked_files,
         "log_path": str(log_path),
         "output_dir": str(output_dir),
     }
+
+
+def execute_ao_plan(*args, **kwargs) -> dict[str, object]:
+    return execute_bake_plan(*args, **kwargs)
 
 
 def find_baked_files(output_dir: str | Path, output_name: str) -> list[str]:

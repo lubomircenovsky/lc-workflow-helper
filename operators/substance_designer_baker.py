@@ -10,14 +10,18 @@ import bpy
 from ..constants import ADDON_PACKAGE
 from ..utils.substance_designer_baker import (
     apply_profile_to_bake_state,
-    build_ao_plan,
+    build_bake_plan,
     build_preview_data,
+    copy_profile_settings,
     default_workspace_root,
     ensure_directory,
-    execute_ao_plan,
+    ensure_profile_ids,
+    execute_bake_plan,
     export_collection_for_baker,
     get_baker_profile,
+    get_baker_profile_index,
     get_export_source,
+    get_profile_by_index,
     parse_baker_info,
     probe_baker_executable,
     run_baker_command,
@@ -79,6 +83,7 @@ def _job_paths(context: bpy.types.Context, job_id: str) -> dict[str, Path]:
 
 
 def _active_baker_profile(preferences):
+    ensure_profile_ids(preferences)
     if not preferences.baker_profiles:
         return None
     index = max(0, min(preferences.active_baker_profile_index, len(preferences.baker_profiles) - 1))
@@ -87,51 +92,22 @@ def _active_baker_profile(preferences):
 
 
 def _sync_profile_selection(state, profile) -> None:
-    state.profile_id = profile.name if profile is not None else ""
+    state.profile_id = profile.profile_id if profile is not None else ""
 
 
-def _copy_state_to_profile(state, profile) -> None:
-    for field_name in (
-        "selection_mode",
-        "excluded_material_pattern",
-        "material_name_contains",
-        "excluded_material_exact",
-        "output_size_x",
-        "output_size_y",
-        "output_size_locked",
-        "output_format",
-        "uv_set",
-        "padding_radius",
-        "enable_mip_diffusion",
-        "anti_aliasing",
-        "average_normals",
-        "use_lowdef_as_highdef",
-        "projection_max_height",
-        "projection_max_depth",
-        "projection_normalized_distance",
-        "projection_cull_backfaces",
-        "projection_match_mode",
-        "projection_hit_strategy",
-        "skew_correction",
-        "skew_map_path",
-        "projection_skew_map_invert",
-        "projection_offset_map_path",
-        "secondary_sample_count",
-        "secondary_min_distance",
-        "secondary_max_distance",
-        "secondary_normalized_distance",
-        "secondary_spread_angle",
-        "secondary_sample_distribution",
-        "culling_mode",
-        "secondary_mesh_match_mode",
-        "normal_map_path",
-        "normal_map_space",
-        "normal_map_orientation",
-        "attenuation",
-        "enable_ground_plane",
-        "ground_offset",
-    ):
-        setattr(profile, field_name, getattr(state, field_name))
+def _resolve_selected_profile(preferences, state, *, fallback_to_active: bool = False):
+    ensure_profile_ids(preferences)
+    profile = get_baker_profile(preferences, state.profile_id)
+    if profile is None and fallback_to_active:
+        profile = _active_baker_profile(preferences)
+    if profile is None:
+        return None
+
+    profile_index = get_baker_profile_index(preferences, profile.profile_id)
+    if profile_index >= 0:
+        preferences.active_baker_profile_index = profile_index
+    _sync_profile_selection(state, profile)
+    return profile
 
 
 def _update_export_source_state(state, export_source: dict[str, object]) -> None:
@@ -194,15 +170,17 @@ class LCW_UL_baker_profiles(bpy.types.UIList):
 class LCW_OT_baker_profile_add(bpy.types.Operator):
     bl_idname = "lcw.baker_profile_add"
     bl_label = "Add Baker Profile"
+    bl_description = "Create a new baker profile from the current N-panel baker settings"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
         preferences = _preferences(context)
         state = _bake_state(context)
+        ensure_profile_ids(preferences)
         profile = preferences.baker_profiles.add()
         profile.profile_id = uuid.uuid4().hex
         profile.name = f"Baker Profile {len(preferences.baker_profiles)}"
-        _copy_state_to_profile(state, profile)
+        copy_profile_settings(state, profile)
         preferences.active_baker_profile_index = len(preferences.baker_profiles) - 1
         _sync_profile_selection(state, profile)
         self.report({"INFO"}, "Added baker profile from the current baker settings.")
@@ -212,6 +190,7 @@ class LCW_OT_baker_profile_add(bpy.types.Operator):
 class LCW_OT_baker_profile_remove(bpy.types.Operator):
     bl_idname = "lcw.baker_profile_remove"
     bl_label = "Remove Baker Profile"
+    bl_description = "Remove the selected baker profile from the global profile list"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
@@ -222,11 +201,13 @@ class LCW_OT_baker_profile_remove(bpy.types.Operator):
             self.report({"WARNING"}, "No baker profile to remove.")
             return {"CANCELLED"}
 
-        removed_profile_name = profile.name
+        removed_profile_id = profile.profile_id
         preferences.baker_profiles.remove(preferences.active_baker_profile_index)
-        preferences.active_baker_profile_index = max(0, preferences.active_baker_profile_index - 1)
-        if state.profile_id == removed_profile_name:
-            _sync_profile_selection(state, None)
+        next_index = min(preferences.active_baker_profile_index, len(preferences.baker_profiles) - 1)
+        preferences.active_baker_profile_index = max(0, next_index)
+        if state.profile_id == removed_profile_id:
+            replacement_profile = get_profile_by_index(preferences, preferences.active_baker_profile_index)
+            _sync_profile_selection(state, replacement_profile)
         self.report({"INFO"}, "Removed baker profile.")
         return {"FINISHED"}
 
@@ -234,6 +215,7 @@ class LCW_OT_baker_profile_remove(bpy.types.Operator):
 class LCW_OT_baker_profile_move(bpy.types.Operator):
     bl_idname = "lcw.baker_profile_move"
     bl_label = "Move Baker Profile"
+    bl_description = "Move the selected baker profile up or down in the global profile list"
     bl_options = {"REGISTER", "UNDO"}
 
     direction: bpy.props.EnumProperty(items=(("UP", "Up", ""), ("DOWN", "Down", "")))
@@ -246,18 +228,20 @@ class LCW_OT_baker_profile_move(bpy.types.Operator):
             return {"CANCELLED"}
         preferences.baker_profiles.move(index, new_index)
         preferences.active_baker_profile_index = new_index
+        _resolve_selected_profile(preferences, _bake_state(context), fallback_to_active=True)
         return {"FINISHED"}
 
 
 class LCW_OT_baker_profile_apply(bpy.types.Operator):
     bl_idname = "lcw.baker_profile_apply"
     bl_label = "Apply Baker Profile"
+    bl_description = "Apply the selected baker profile to the current N-panel baker state"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
         preferences = _preferences(context)
         state = _bake_state(context)
-        profile = get_baker_profile(preferences, state.profile_id)
+        profile = _resolve_selected_profile(preferences, state, fallback_to_active=True)
         if profile is None:
             self.report({"WARNING"}, "Select a baker profile first.")
             return {"CANCELLED"}
@@ -271,17 +255,18 @@ class LCW_OT_baker_profile_apply(bpy.types.Operator):
 class LCW_OT_baker_profile_capture(bpy.types.Operator):
     bl_idname = "lcw.baker_profile_capture"
     bl_label = "Save Current Settings To Profile"
+    bl_description = "Capture the current N-panel baker settings into the selected baker profile"
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
         preferences = _preferences(context)
         state = _bake_state(context)
-        profile = get_baker_profile(preferences, state.profile_id)
+        profile = _resolve_selected_profile(preferences, state, fallback_to_active=True)
         if profile is None:
             self.report({"WARNING"}, "Select a baker profile first.")
             return {"CANCELLED"}
 
-        _copy_state_to_profile(state, profile)
+        copy_profile_settings(state, profile)
         _sync_profile_selection(state, profile)
         self.report({"INFO"}, f"Updated baker profile '{profile.name}' from the current settings.")
         return {"FINISHED"}
@@ -296,6 +281,7 @@ class LCW_OT_sdb_validate(bpy.types.Operator):
     def execute(self, context: bpy.types.Context):
         state = _bake_state(context)
         preferences = _preferences(context)
+        _resolve_selected_profile(preferences, state)
         export_source = _current_export_source(context)
         _update_export_source_state(state, export_source)
         errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
@@ -324,6 +310,7 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
     def execute(self, context: bpy.types.Context):
         state = _bake_state(context)
         preferences = _preferences(context)
+        _resolve_selected_profile(preferences, state)
         errors, _warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
         if errors:
             state.job_status = "FAILED"
@@ -348,8 +335,8 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
 
 class LCW_OT_sdb_bake_ao(bpy.types.Operator):
     bl_idname = "lcw.sdb_bake_ao"
-    bl_label = "Export + Bake AO"
-    bl_description = "Export the selected collection and bake ambient occlusion through Substance Designer baker"
+    bl_label = "Bake Enabled Bakers"
+    bl_description = "Export the selected collection and bake the currently enabled Substance baker outputs"
     bl_options = {"REGISTER"}
 
     _timer = None
@@ -387,6 +374,7 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
     def execute(self, context: bpy.types.Context):
         state = _bake_state(context)
         preferences = _preferences(context)
+        _resolve_selected_profile(preferences, state)
         errors, _warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
         if errors:
             state.job_status = "FAILED"
@@ -409,9 +397,9 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
             self.report({"ERROR"}, preview["message"])
             return {"CANCELLED"}
 
-        job_id = f"ao-{timestamp_job_id()}-{uuid.uuid4().hex[:8]}"
+        job_id = f"bake-{timestamp_job_id()}-{uuid.uuid4().hex[:8]}"
         paths = _job_paths(context, job_id)
-        plan = build_ao_plan(
+        plan = build_bake_plan(
             scene_name=export_path.stem,
             fbx_path=export_path,
             output_dir=paths["output_dir"],
@@ -419,6 +407,11 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
             state=state,
             groups=preview["groups"],
         )
+        if not plan["Bakers"]:
+            state.job_status = "FAILED"
+            state.job_message = "Enable at least one baker before running a bake."
+            self.report({"ERROR"}, state.job_message)
+            return {"CANCELLED"}
         write_json_file(paths["plan_path"], plan)
 
         result_holder = {
@@ -430,7 +423,7 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
         }
 
         def _run_job():
-            result_holder.update(execute_ao_plan(plan, preferences.substance_baker_executable, paths["log_path"]))
+            result_holder.update(execute_bake_plan(plan, preferences.substance_baker_executable, paths["log_path"]))
 
         thread = threading.Thread(target=_run_job, daemon=True)
         thread.start()
@@ -441,7 +434,7 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
         state.last_output_dir = str(paths["output_dir"])
         state.last_log_path = str(paths["log_path"])
         state.job_status = "RUNNING"
-        state.job_message = "AO bake is running..."
+        state.job_message = "Bake is running..."
 
         ACTIVE_JOBS[job_id] = {"thread": thread, "result": result_holder}
         self._job_id = job_id
@@ -453,7 +446,7 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
 class LCW_OT_sdb_open_output_folder(bpy.types.Operator):
     bl_idname = "lcw.sdb_open_output_folder"
     bl_label = "Open Output Folder"
-    bl_description = "Open the last AO output folder"
+    bl_description = "Open the last baker output folder"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
@@ -468,7 +461,7 @@ class LCW_OT_sdb_open_output_folder(bpy.types.Operator):
 class LCW_OT_sdb_show_last_log(bpy.types.Operator):
     bl_idname = "lcw.sdb_show_last_log"
     bl_label = "Show Last Log"
-    bl_description = "Open the last bake log"
+    bl_description = "Open the last baker log"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):

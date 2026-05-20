@@ -4,6 +4,24 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringProperty
 
 from .properties import LCW_PG_BakerProfile, LCW_PG_WorkflowPreset
+from .utils.substance_designer_baker import ensure_profile_ids, get_profile_by_index
+
+
+def _sync_active_baker_profile(self, context: bpy.types.Context | None) -> None:
+    ensure_profile_ids(self)
+    profile = get_profile_by_index(self, self.active_baker_profile_index)
+    if context is None:
+        return
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return
+    file_state = getattr(scene, "lcw_scene_state", None)
+    if file_state is None:
+        return
+    bake_state = getattr(file_state, "substance_designer_baker", None)
+    if bake_state is None:
+        return
+    bake_state.profile_id = profile.profile_id if profile is not None else ""
 
 
 class LCW_AddonPreferences(bpy.types.AddonPreferences):
@@ -12,14 +30,21 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
     presets: CollectionProperty(type=LCW_PG_WorkflowPreset)
     active_preset_index: IntProperty(name="Active Preset", default=0)
     baker_profiles: CollectionProperty(type=LCW_PG_BakerProfile)
-    active_baker_profile_index: IntProperty(name="Active Baker Profile", default=0)
+    active_baker_profile_index: IntProperty(
+        name="Active Baker Profile",
+        description="Selected global baker profile shown in the Bakers panel",
+        default=0,
+        update=_sync_active_baker_profile,
+    )
     substance_baker_executable: StringProperty(
         name="Substance Baker Executable",
+        description="Path to Adobe Substance 3D Designer's baker executable",
         subtype="FILE_PATH",
         default=r"C:\Program Files\Adobe\Adobe Substance 3D Designer\substance3d_baker.exe",
     )
     substance_baker_workspace_root: StringProperty(
         name="Workspace Root",
+        description="Optional root folder for preview exports, plans, logs, and bake output jobs",
         subtype="DIR_PATH",
         default="",
     )
@@ -53,31 +78,8 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
         row = box.row(align=True)
         row.prop(self, "substance_baker_keep_meshes_in_cache")
         row.prop(self, "substance_baker_texture_cache_size")
-
-        profiles_box = layout.box()
-        profiles_box.label(text="Baker Profiles")
-        row = profiles_box.row()
-        row.template_list(
-            "LCW_UL_baker_profiles",
-            "",
-            self,
-            "baker_profiles",
-            self,
-            "active_baker_profile_index",
-            rows=3,
-        )
-        col = row.column(align=True)
-        col.operator("lcw.baker_profile_add", text="", icon="ADD")
-        col.operator("lcw.baker_profile_remove", text="", icon="REMOVE")
-        move = col.operator("lcw.baker_profile_move", text="", icon="TRIA_UP")
-        move.direction = "UP"
-        move = col.operator("lcw.baker_profile_move", text="", icon="TRIA_DOWN")
-        move.direction = "DOWN"
-
-        if self.baker_profiles:
-            index = max(0, min(self.active_baker_profile_index, len(self.baker_profiles) - 1))
-            self.active_baker_profile_index = index
-            profiles_box.prop(self.baker_profiles[index], "name")
+        hint_box = layout.box()
+        hint_box.label(text="Baker profiles are managed from the N-panel Baker Scope section.", icon="INFO")
 
 
 CLASSES = (LCW_AddonPreferences,)

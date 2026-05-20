@@ -5,7 +5,7 @@ from bpy.app.handlers import persistent
 
 from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
 from ..operators.favorites import favorite_action_available
-from ..utils.substance_designer_baker import get_export_source
+from ..utils.substance_designer_baker import BAKER_DEFINITIONS, get_export_source
 from ..utils.common import addon_preferences, is_favorite_action, scene_state, wm_state
 
 
@@ -66,6 +66,127 @@ def _draw_collapsible_section(
     if not expanded:
         return None
     return box.column(align=False)
+
+
+SDB_BAKER_SECTION_FIELDS = {
+    "ambient_occlusion": "ambient_occlusion_section_open",
+    "bent_normal": "bent_normal_section_open",
+    "curvature": "curvature_section_open",
+    "height": "height_section_open",
+    "normal": "normal_section_open",
+    "thickness": "thickness_section_open",
+}
+
+SDB_BAKER_SUMMARIES = {
+    "ambient_occlusion": "Contact shadow and cavity style occlusion map.",
+    "bent_normal": "Bent normal direction map from secondary ray visibility.",
+    "curvature": "Convex and concave edge curvature map.",
+    "height": "Height map from projection distance.",
+    "normal": "Normal map from projected geometry.",
+    "thickness": "Thickness map from opposite-side ray distance.",
+}
+
+
+def _enabled_baker_count(state) -> int:
+    return sum(1 for definition in BAKER_DEFINITIONS if getattr(state, definition.enabled_field))
+
+
+def _draw_baker_card(layout: bpy.types.UILayout, state, definition) -> None:
+    section_field = SDB_BAKER_SECTION_FIELDS[definition.baker_id]
+    card = layout.box()
+    header = card.row(align=True)
+    header.prop(state, section_field, text="", emboss=False, icon="TRIA_DOWN" if getattr(state, section_field) else "TRIA_RIGHT")
+    header.prop(state, definition.enabled_field, text=definition.label)
+    header.label(text=SDB_BAKER_SUMMARIES[definition.baker_id], icon="CHECKMARK" if getattr(state, definition.enabled_field) else "RADIOBUT_OFF")
+
+    if not getattr(state, section_field):
+        return
+
+    body = card.column(align=False)
+    body.enabled = getattr(state, definition.enabled_field)
+
+    if definition.baker_id == "ambient_occlusion":
+        _draw_ambient_occlusion_settings(body, state)
+    elif definition.baker_id == "bent_normal":
+        _draw_bent_normal_settings(body, state)
+    elif definition.baker_id == "curvature":
+        _draw_curvature_settings(body, state)
+    elif definition.baker_id == "height":
+        _draw_height_settings(body, state)
+    elif definition.baker_id == "normal":
+        _draw_normal_settings(body, state)
+    elif definition.baker_id == "thickness":
+        _draw_thickness_settings(body, state)
+
+
+def _draw_ambient_occlusion_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "secondary_sample_count")
+    layout.prop(state, "secondary_min_distance")
+    layout.prop(state, "secondary_max_distance")
+    layout.prop(state, "secondary_normalized_distance")
+    layout.prop(state, "secondary_spread_angle")
+    layout.prop(state, "secondary_sample_distribution")
+    layout.prop(state, "culling_mode")
+    layout.prop(state, "secondary_mesh_match_mode", text="Self Occlusion")
+    layout.prop(state, "normal_map_path")
+    layout.prop(state, "normal_map_space", text="Map Type")
+    layout.prop(state, "normal_map_orientation", text="Normal Orientation")
+    layout.prop(state, "attenuation")
+    layout.prop(state, "enable_ground_plane", text="Ground Plane")
+    if state.enable_ground_plane:
+        layout.prop(state, "ground_offset")
+
+
+def _draw_bent_normal_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "bent_secondary_sample_count")
+    layout.prop(state, "bent_secondary_min_distance")
+    layout.prop(state, "bent_secondary_max_distance")
+    layout.prop(state, "bent_secondary_normalized_distance")
+    layout.prop(state, "bent_secondary_spread_angle")
+    layout.prop(state, "bent_secondary_sample_distribution")
+    layout.prop(state, "bent_culling_mode")
+    layout.prop(state, "bent_secondary_mesh_match_mode")
+    layout.prop(state, "bent_output_texture_space")
+    layout.prop(state, "bent_output_texture_orientation")
+
+
+def _draw_curvature_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "curvature_secondary_sample_count")
+    layout.prop(state, "curvature_sampling_radius")
+    layout.prop(state, "curvature_normalized_distance")
+    layout.prop(state, "curvature_mesh_match_mode")
+    layout.prop(state, "curvature_normal_map_path")
+    layout.prop(state, "curvature_normal_map_space")
+    layout.prop(state, "curvature_normal_map_orientation")
+    layout.prop(state, "curvature_auto_minmax")
+    bounds = layout.column(align=True)
+    bounds.enabled = not state.curvature_auto_minmax
+    bounds.label(text="Value Bounds")
+    bounds.prop(state, "curvature_value_min")
+    bounds.prop(state, "curvature_value_max")
+
+
+def _draw_height_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "height_normalization")
+    divisor = layout.row()
+    divisor.enabled = state.height_normalization == "manual"
+    divisor.prop(state, "height_divisor")
+
+
+def _draw_normal_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "normal_output_texture_space")
+    layout.prop(state, "normal_output_texture_orientation")
+
+
+def _draw_thickness_settings(layout: bpy.types.UILayout, state) -> None:
+    layout.prop(state, "thickness_secondary_sample_count")
+    layout.prop(state, "thickness_secondary_min_distance")
+    layout.prop(state, "thickness_secondary_max_distance")
+    layout.prop(state, "thickness_secondary_normalized_distance")
+    layout.prop(state, "thickness_secondary_spread_angle")
+    layout.prop(state, "thickness_secondary_sample_distribution")
+    layout.prop(state, "thickness_secondary_mesh_match_mode")
+    layout.prop(state, "thickness_normalization")
 
 
 def _draw_collapsible_tool(
@@ -696,19 +817,38 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
         section = _draw_collapsible_section(layout, bake_state, "scope_section_open", "Scope", icon="OUTLINER_COLLECTION")
         if section:
             section.prop(bake_state, "target_collection")
-            row = section.row(align=True)
-            row.prop_search(bake_state, "profile_id", preferences, "baker_profiles", text="Profile", icon="PRESET")
-            row.operator("lcw.baker_profile_apply", text="", icon="IMPORT")
-            row.operator("lcw.baker_profile_capture", text="", icon="EXPORT")
+            profiles_box = section.box()
+            profiles_box.label(text="Baker Profiles", icon="PRESET")
+            profiles_box.operator("lcw.baker_profile_add", text="New Profile", icon="ADD")
+            row = profiles_box.row()
+            row.template_list(
+                "LCW_UL_baker_profiles",
+                "",
+                preferences,
+                "baker_profiles",
+                preferences,
+                "active_baker_profile_index",
+                rows=3,
+            )
+            col = row.column(align=True)
+            col.operator("lcw.baker_profile_remove", text="", icon="REMOVE")
+            move = col.operator("lcw.baker_profile_move", text="", icon="TRIA_UP")
+            move.direction = "UP"
+            move = col.operator("lcw.baker_profile_move", text="", icon="TRIA_DOWN")
+            move.direction = "DOWN"
+            if preferences.baker_profiles:
+                profile_index = max(0, min(preferences.active_baker_profile_index, len(preferences.baker_profiles) - 1))
+                active_profile = preferences.baker_profiles[profile_index]
+                profiles_box.prop(active_profile, "name", text="Name")
+                action_row = profiles_box.row(align=True)
+                action_row.operator("lcw.baker_profile_apply", icon="IMPORT")
+                action_row.operator("lcw.baker_profile_capture", icon="EXPORT")
+            else:
+                profiles_box.label(text="Create a profile from the current baker settings.", icon="INFO")
             selection_box = section.box()
             selection_box.prop(bake_state, "selection_mode")
             if bake_state.selection_mode == "ALL_EXCEPT_EXCLUDED":
                 selection_box.prop(bake_state, "excluded_material_pattern")
-            elif bake_state.selection_mode == "MATCHING_MATERIAL_NAME":
-                selection_box.prop(bake_state, "material_name_contains")
-            else:
-                selection_box.prop(bake_state, "excluded_material_exact")
-            section.prop(bake_state, "output_root")
 
         section = _draw_collapsible_section(layout, bake_state, "export_section_open", "Export", icon="EXPORT")
         if section:
@@ -738,10 +878,12 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
                     if item.detail:
                         row.label(text=item.detail)
 
-        section = _draw_collapsible_section(layout, bake_state, "defaults_section_open", "Bakers Default Values", icon="PREFERENCES")
+        section = _draw_collapsible_section(layout, bake_state, "defaults_section_open", "Common Settings", icon="PREFERENCES")
         if section:
+            section.prop(bake_state, "output_root")
+
             row = section.row(align=True)
-            row.label(text="Default Size")
+            row.label(text="Output Size")
             size_row = row.row(align=True)
             size_row.prop(bake_state, "output_size_x", text="")
             lock_icon = "LOCKED" if bake_state.output_size_locked else "UNLOCKED"
@@ -751,15 +893,15 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             second_size.prop(bake_state, "output_size_y", text="")
 
             row = section.row(align=True)
-            row.label(text="Default Format")
+            row.label(text="Output Format")
             row.prop(bake_state, "output_format", text="")
 
             row = section.row(align=True)
-            row.label(text="Default Anti Alias")
+            row.label(text="Anti Alias")
             row.prop(bake_state, "anti_aliasing", text="")
 
             row = section.row(align=True)
-            row.label(text="Default UV Set")
+            row.label(text="UV Set")
             compact = row.row(align=True)
             compact.ui_units_x = 4
             compact.prop(bake_state, "uv_set", text="")
@@ -773,6 +915,7 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             row = section.row(align=True)
             row.prop(bake_state, "enable_mip_diffusion", text="Apply Diffusion")
             row.prop(bake_state, "average_normals", text="Average Normals")
+            row.prop(bake_state, "use_lowdef_as_highdef", text="Use Low As High")
 
             backend_tokens = []
             if preferences.substance_baker_backend_sal:
@@ -780,24 +923,6 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             if preferences.substance_baker_backend_sora:
                 backend_tokens.append("SoRa")
             section.label(text=f"Backends: {','.join(backend_tokens) or 'None'}", icon="CONSOLE")
-
-        section = _draw_collapsible_section(layout, bake_state, "ambient_occlusion_section_open", "Ambient Occlusion", icon="SHADING_RENDERED")
-        if section:
-            section.prop(bake_state, "secondary_sample_count")
-            section.prop(bake_state, "secondary_min_distance")
-            section.prop(bake_state, "secondary_max_distance")
-            section.prop(bake_state, "secondary_normalized_distance")
-            section.prop(bake_state, "secondary_spread_angle")
-            section.prop(bake_state, "secondary_sample_distribution")
-            section.prop(bake_state, "culling_mode")
-            section.prop(bake_state, "secondary_mesh_match_mode", text="Self Occlusion")
-            section.prop(bake_state, "normal_map_path")
-            section.prop(bake_state, "normal_map_space", text="Map Type")
-            section.prop(bake_state, "normal_map_orientation", text="Normal Orientation")
-            section.prop(bake_state, "attenuation")
-            section.prop(bake_state, "enable_ground_plane", text="Ground Plane")
-            if bake_state.enable_ground_plane:
-                section.prop(bake_state, "ground_offset")
 
             projection_box = section.box()
             projection_box.label(text="Projection", icon="MOD_SHRINKWRAP")
@@ -812,10 +937,18 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             projection_box.prop(bake_state, "projection_skew_map_invert")
             projection_box.prop(bake_state, "projection_offset_map_path")
 
-            high_poly_section = _draw_collapsible_section(section, bake_state, "high_poly_section_open", "Setup High Poly Meshes", icon="MESH_DATA")
-            if high_poly_section:
-                high_poly_section.label(text="v1 executes low definition as high definition.", icon="INFO")
-                disabled_box = high_poly_section.box()
+            high_poly_box = section.box()
+            high_poly_header = high_poly_box.row()
+            high_poly_header.prop(
+                bake_state,
+                "high_poly_section_open",
+                text="Setup High Poly Meshes",
+                icon="TRIA_DOWN" if bake_state.high_poly_section_open else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if bake_state.high_poly_section_open:
+                high_poly_box.label(text="v1 executes low definition as high definition.", icon="INFO")
+                disabled_box = high_poly_box.box()
                 disabled_box.label(text="High poly mesh lists and cage inputs are reserved for a future phase.", icon="LOCKED")
                 disabled = disabled_box.column(align=False)
                 disabled.enabled = False
@@ -823,11 +956,20 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
                 disabled.prop(bake_state, "cage_scene_path")
                 disabled.prop(bake_state, "high_scene_paths")
 
+        section = _draw_collapsible_section(layout, bake_state, "bakers_section_open", "Bakers", icon="SHADING_RENDERED")
+        if section:
+            enabled_count = _enabled_baker_count(bake_state)
+            section.label(text=f"{enabled_count} baker(s) enabled.", icon="INFO")
+            for definition in BAKER_DEFINITIONS:
+                _draw_baker_card(section, bake_state, definition)
+
         section = _draw_collapsible_section(layout, bake_state, "actions_section_open", "Bake", icon="PLAY")
         if section:
             row = section.row(align=True)
-            row.operator("lcw.sdb_bake_ao", icon="RENDER_STILL")
+            row.operator("lcw.sdb_bake_ao", text="Bake Enabled Bakers", icon="RENDER_STILL")
             row.enabled = bake_state.job_status != "RUNNING"
+            enabled_labels = [definition.label for definition in BAKER_DEFINITIONS if getattr(bake_state, definition.enabled_field)]
+            section.label(text=f"Enabled: {', '.join(enabled_labels) if enabled_labels else 'None'}", icon="RENDERLAYERS")
             actions = section.row(align=True)
             actions.operator("lcw.sdb_open_output_folder", icon="FILE_FOLDER")
             actions.operator("lcw.sdb_show_last_log", icon="TEXT")
