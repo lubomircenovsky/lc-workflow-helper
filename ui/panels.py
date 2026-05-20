@@ -915,7 +915,6 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             row = section.row(align=True)
             row.prop(bake_state, "enable_mip_diffusion", text="Apply Diffusion")
             row.prop(bake_state, "average_normals", text="Average Normals")
-            row.prop(bake_state, "use_lowdef_as_highdef", text="Use Low As High")
 
             backend_tokens = []
             if preferences.substance_baker_backend_sal:
@@ -923,6 +922,42 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             if preferences.substance_baker_backend_sora:
                 backend_tokens.append("SoRa")
             section.label(text=f"Backends: {','.join(backend_tokens) or 'None'}", icon="CONSOLE")
+
+            high_poly_box = section.box()
+            high_poly_header = high_poly_box.row()
+            high_poly_header.prop(
+                bake_state,
+                "high_poly_section_open",
+                text="Setup High Poly Meshes",
+                icon="TRIA_DOWN" if bake_state.high_poly_section_open else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if bake_state.high_poly_section_open:
+                high_poly_box.prop(bake_state, "use_lowdef_as_highdef", text="Use Low As High")
+
+                status_box = high_poly_box.box()
+                status_box.alert = bake_state.use_lowdef_as_highdef
+                if bake_state.use_lowdef_as_highdef:
+                    status_box.label(
+                        text="Low-as-high active: High Poly and Cage inputs are ignored for bake.",
+                        icon="LOCKED",
+                    )
+                else:
+                    status_box.label(
+                        text="High Poly Collection is required. Use _low / _high naming for mesh-name matching.",
+                        icon="INFO",
+                    )
+
+                hp_inputs = high_poly_box.column(align=False)
+                hp_inputs.enabled = not bake_state.use_lowdef_as_highdef
+                hp_inputs.label(text="Naming convention: low meshes use _low, high meshes use _high.", icon="INFO")
+                hp_inputs.prop(bake_state, "high_poly_collection")
+                if bake_state.use_lowdef_as_highdef:
+                    high_poly_box.label(text="Disabled while Use Low As High is enabled.", icon="LOCKED")
+                hp_inputs.prop(bake_state, "use_cage")
+                cage_row = hp_inputs.row()
+                cage_row.enabled = bake_state.use_cage and not bake_state.use_lowdef_as_highdef
+                cage_row.prop(bake_state, "cage_collection")
 
             projection_box = section.box()
             projection_box.label(text="Projection", icon="MOD_SHRINKWRAP")
@@ -936,25 +971,6 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             projection_box.prop(bake_state, "skew_map_path")
             projection_box.prop(bake_state, "projection_skew_map_invert")
             projection_box.prop(bake_state, "projection_offset_map_path")
-
-            high_poly_box = section.box()
-            high_poly_header = high_poly_box.row()
-            high_poly_header.prop(
-                bake_state,
-                "high_poly_section_open",
-                text="Setup High Poly Meshes",
-                icon="TRIA_DOWN" if bake_state.high_poly_section_open else "TRIA_RIGHT",
-                emboss=False,
-            )
-            if bake_state.high_poly_section_open:
-                high_poly_box.label(text="v1 executes low definition as high definition.", icon="INFO")
-                disabled_box = high_poly_box.box()
-                disabled_box.label(text="High poly mesh lists and cage inputs are reserved for a future phase.", icon="LOCKED")
-                disabled = disabled_box.column(align=False)
-                disabled.enabled = False
-                disabled.prop(bake_state, "use_cage")
-                disabled.prop(bake_state, "cage_scene_path")
-                disabled.prop(bake_state, "high_scene_paths")
 
         section = _draw_collapsible_section(layout, bake_state, "bakers_section_open", "Bakers", icon="SHADING_RENDERED")
         if section:

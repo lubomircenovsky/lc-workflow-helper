@@ -29,6 +29,7 @@ __all__ = (
     "execute_ao_plan",
     "execute_bake_plan",
     "export_collection_for_baker",
+    "export_collection_to_fbx",
     "find_baked_files",
     "get_baker_profile_index",
     "get_baker_profile",
@@ -193,6 +194,7 @@ PROFILE_FIELD_NAMES = (
     "skew_map_path",
     "projection_skew_map_invert",
     "projection_offset_map_path",
+    "use_cage",
     "secondary_sample_count",
     "secondary_min_distance",
     "secondary_max_distance",
@@ -269,7 +271,12 @@ def backend_string(preferences) -> str:
     return ",".join(enabled)
 
 
-def validate_baker_setup(executable_path: str, collection: bpy.types.Collection | None, preferences=None) -> tuple[list[str], list[str]]:
+def validate_baker_setup(
+    executable_path: str,
+    collection: bpy.types.Collection | None,
+    preferences=None,
+    state=None,
+) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
 
@@ -289,6 +296,14 @@ def validate_baker_setup(executable_path: str, collection: bpy.types.Collection 
 
     if preferences is not None and not backend_string(preferences):
         errors.append("At least one Substance baker backend must be enabled.")
+
+    if state is not None:
+        if not getattr(state, "use_lowdef_as_highdef", True) and getattr(state, "high_poly_collection", None) is None:
+            errors.append("High Poly Collection is required when Use Low As High is disabled.")
+        if getattr(state, "use_lowdef_as_highdef", True) and getattr(state, "use_cage", False):
+            warnings.append("Use Cage is ignored while Use Low As High is enabled.")
+        elif getattr(state, "use_cage", False) and getattr(state, "cage_collection", None) is None:
+            errors.append("Cage Collection is required when Use Cage is enabled.")
 
     return errors, warnings
 
@@ -693,10 +708,13 @@ def build_bake_plan(
         },
         "profile_id": state.profile_id,
     }
+    use_lowdef_as_highdef = bool(state.use_lowdef_as_highdef)
+    high_scene_paths = "" if use_lowdef_as_highdef else state.high_scene_paths
+    use_cage = bool(not use_lowdef_as_highdef and state.use_cage and state.cage_scene_path)
     common_projection = {
-        "high_scene_paths": state.high_scene_paths,
-        "use_cage": state.use_cage,
-        "cage_scene_path": state.cage_scene_path,
+        "high_scene_paths": high_scene_paths,
+        "use_cage": use_cage,
+        "cage_scene_path": state.cage_scene_path if use_cage else "",
         "max_height": state.projection_max_height,
         "max_depth": state.projection_max_depth,
         "normalized_distance": state.projection_normalized_distance,
@@ -796,7 +814,7 @@ def build_bake_plan(
 
     return {
         "Generator": "LC Workflow helper",
-        "GeneratorVersion": "0.3.0",
+        "GeneratorVersion": "0.3.1",
         "Common": common,
         "CommonProjection": common_projection,
         "EnabledBakers": [definition.baker_id for definition in enabled_bakers],
@@ -896,6 +914,11 @@ def _base_bake_command_from_plan(plan: dict[str, object], baker_entry: dict[str,
         command.extend(["--projection.skew_map_path", projection["skew_map_path"]])
     if projection["offset_map_path"]:
         command.extend(["--projection.offset_map_path", projection["offset_map_path"]])
+    if projection["high_scene_paths"]:
+        command.extend(["--high_scene_paths", projection["high_scene_paths"]])
+    if projection["use_cage"]:
+        command.extend(["--use_cage", "true"])
+        command.extend(["--cage_scene_path", projection["cage_scene_path"]])
 
     for mesh_path in baker_entry["SelectedMeshes"]:
         command.extend(["--selected_meshes", mesh_path])

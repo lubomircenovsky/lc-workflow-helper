@@ -18,6 +18,7 @@ from ..utils.substance_designer_baker import (
     ensure_profile_ids,
     execute_bake_plan,
     export_collection_for_baker,
+    export_collection_to_fbx,
     get_baker_profile,
     get_baker_profile_index,
     get_export_source,
@@ -70,12 +71,16 @@ def _job_paths(context: bpy.types.Context, job_id: str) -> dict[str, Path]:
     export_root = ensure_directory(job_root / "export")
     scene_name = _selected_collection_scene_name(_bake_state(context).target_collection)
     export_path = export_root / f"{_sanitize_scene_name(scene_name)}.fbx"
+    high_export_path = export_root / f"{_sanitize_scene_name(scene_name)}_high.fbx"
+    cage_export_path = export_root / f"{_sanitize_scene_name(scene_name)}_cage.fbx"
     output_root = ensure_directory(_output_root(context) / _sanitize_scene_name(scene_name))
     log_path = job_root / "bake.log"
     plan_path = job_root / "execution_plan.json"
     return {
         "job_root": job_root,
         "export_path": export_path,
+        "high_export_path": high_export_path,
+        "cage_export_path": cage_export_path,
         "output_dir": output_root,
         "log_path": log_path,
         "plan_path": plan_path,
@@ -115,6 +120,50 @@ def _update_export_source_state(state, export_source: dict[str, object]) -> None
     state.export_source_name = str(export_source["name"])
     state.export_source_path = str(export_source["path"])
     state.export_source_label = str(export_source["label"])
+
+
+def _export_projection_sources(context: bpy.types.Context, paths: dict[str, Path]) -> None:
+    state = _bake_state(context)
+    if state.use_lowdef_as_highdef:
+        state.high_scene_paths = ""
+        state.cage_scene_path = ""
+        return
+
+    high_path = export_collection_to_fbx(context, state.high_poly_collection, paths["high_export_path"])
+    state.high_scene_paths = str(high_path)
+    if state.use_cage:
+        cage_path = export_collection_to_fbx(context, state.cage_collection, paths["cage_export_path"])
+        state.cage_scene_path = str(cage_path)
+    else:
+        state.cage_scene_path = ""
+
+
+def _collection_mesh_names(collection: bpy.types.Collection | None) -> set[str]:
+    if collection is None:
+        return set()
+    return {obj.name for obj in collection.all_objects if obj.type == "MESH"}
+
+
+def _naming_warnings(state) -> list[str]:
+    if state.projection_match_mode != "match_mesh_name" or state.use_lowdef_as_highdef:
+        return []
+    low_names = _collection_mesh_names(state.target_collection)
+    high_names = _collection_mesh_names(state.high_poly_collection)
+    if not low_names or not high_names:
+        return []
+    low_suffix_names = sorted(name for name in low_names if name.endswith("_low"))
+    if not low_suffix_names:
+        return ["HP naming warning: no low meshes ending with _low were found for match-by-name projection."]
+    if not any(name.endswith("_high") for name in high_names):
+        return ["HP naming warning: no high meshes ending with _high were found for match-by-name projection."]
+    unmatched = []
+    for low_name in low_suffix_names:
+        expected_high_name = f"{low_name[:-4]}_high"
+        if expected_high_name not in high_names:
+            unmatched.append(f"{low_name}->{expected_high_name}")
+    if unmatched:
+        return [f"HP naming warning: missing matches for {', '.join(unmatched[:5])}."]
+    return []
 
 
 def _current_export_source(context: bpy.types.Context) -> dict[str, object]:
@@ -284,19 +333,25 @@ class LCW_OT_sdb_validate(bpy.types.Operator):
         _resolve_selected_profile(preferences, state)
         export_source = _current_export_source(context)
         _update_export_source_state(state, export_source)
-        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
+        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
+        warnings.extend(_naming_warnings(state))
         probe_ok, probe_message = probe_baker_executable(preferences.substance_baker_executable)
         if not probe_ok:
             errors.append(probe_message)
-        if warnings:
-            state.job_message = " | ".join(warnings)
+        warning_message = " | ".join(warnings)
         if errors:
             state.job_status = "FAILED"
             self.report({"ERROR"}, " | ".join(errors[:3]))
             return {"CANCELLED"}
 
         state.job_status = "VALID"
-        state.job_message = f"Validation succeeded. {state.export_source_label}"
+        state.job_message = (
+            f"Validation succeeded with warnings: {warning_message}. {state.export_source_label}"
+            if warning_message
+            else f"Validation succeeded. {state.export_source_label}"
+        )
+        if warning_message:
+            self.report({"WARNING"}, warning_message)
         self.report({"INFO"}, "Substance Designer baker setup is valid.")
         return {"FINISHED"}
 
@@ -311,12 +366,13 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
         state = _bake_state(context)
         preferences = _preferences(context)
         _resolve_selected_profile(preferences, state)
-        errors, _warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
+        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
         if errors:
             state.job_status = "FAILED"
             state.job_message = " | ".join(errors)
             self.report({"ERROR"}, state.job_message)
             return {"CANCELLED"}
+        warning_message = " | ".join(warnings)
 
         try:
             _export_path, _export_source, _meshes, preview = _export_and_collect_preview(context)
@@ -329,6 +385,9 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
         _set_preview_items(state, preview)
         state.job_status = "PREVIEW_READY"
         state.job_message = f"{state.preview_message} {state.export_source_label}"
+        if warning_message:
+            state.job_message = f"{state.job_message} | {warning_message}"
+            self.report({"WARNING"}, warning_message)
         self.report({"INFO"}, state.preview_message)
         return {"FINISHED"}
 
@@ -375,12 +434,16 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
         state = _bake_state(context)
         preferences = _preferences(context)
         _resolve_selected_profile(preferences, state)
-        errors, _warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences)
+        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
+        warnings.extend(_naming_warnings(state))
         if errors:
             state.job_status = "FAILED"
             state.job_message = " | ".join(errors)
             self.report({"ERROR"}, state.job_message)
             return {"CANCELLED"}
+        warning_message = " | ".join(warnings)
+        if warning_message:
+            self.report({"WARNING"}, warning_message)
 
         try:
             export_path, _export_source, _meshes, preview = _export_and_collect_preview(context)
@@ -399,6 +462,13 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
 
         job_id = f"bake-{timestamp_job_id()}-{uuid.uuid4().hex[:8]}"
         paths = _job_paths(context, job_id)
+        try:
+            _export_projection_sources(context, paths)
+        except Exception as exc:
+            state.job_status = "FAILED"
+            state.job_message = str(exc)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
         plan = build_bake_plan(
             scene_name=export_path.stem,
             fbx_path=export_path,

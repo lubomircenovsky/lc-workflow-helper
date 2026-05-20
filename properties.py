@@ -251,6 +251,11 @@ class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
         subtype="FILE_PATH",
         default="",
     )
+    use_cage: BoolProperty(
+        name="Use Cage",
+        description="Enable cage projection when a scene-specific Cage Collection is selected",
+        default=False,
+    )
     secondary_sample_count: IntProperty(
         name="Secondary Rays",
         description="Number of AO rays shot from each texel",
@@ -261,7 +266,7 @@ class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
     secondary_min_distance: FloatProperty(
         name="Min Occluder Distance",
         description="Ignore AO hits closer than this distance",
-        default=0.00001,
+        default=0.001,
         min=0.0,
     )
     secondary_max_distance: FloatProperty(
@@ -335,7 +340,7 @@ class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
         default=0.0,
     )
     bent_secondary_sample_count: IntProperty(name="Bent Secondary Rays", default=64, min=1, max=256)
-    bent_secondary_min_distance: FloatProperty(name="Bent Min Occluder Distance", default=0.00001, min=0.0)
+    bent_secondary_min_distance: FloatProperty(name="Bent Min Occluder Distance", default=0.001, min=0.0)
     bent_secondary_max_distance: FloatProperty(name="Bent Max Occluder Distance", default=1.0, min=0.0)
     bent_secondary_normalized_distance: BoolProperty(name="Bent Relative To Bounding Box", default=True)
     bent_secondary_spread_angle: FloatProperty(name="Bent Spread Angle", default=180.0, min=0.0, max=180.0)
@@ -359,7 +364,7 @@ class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
     normal_output_texture_space: EnumProperty(name="Normal Output Type", items=SDB_OUTPUT_TEXTURE_SPACE_ITEMS, default="tangent_space")
     normal_output_texture_orientation: EnumProperty(name="Normal Output Orientation", items=SDB_OUTPUT_TEXTURE_ORIENTATION_ITEMS, default="directx")
     thickness_secondary_sample_count: IntProperty(name="Thickness Secondary Rays", default=64, min=1, max=256)
-    thickness_secondary_min_distance: FloatProperty(name="Thickness Min Occluder Distance", default=0.00001, min=0.0)
+    thickness_secondary_min_distance: FloatProperty(name="Thickness Min Occluder Distance", default=0.001, min=0.0)
     thickness_secondary_max_distance: FloatProperty(name="Thickness Max Occluder Distance", default=0.1, min=0.0)
     thickness_secondary_normalized_distance: BoolProperty(name="Thickness Relative To Bounding Box", default=True)
     thickness_secondary_spread_angle: FloatProperty(name="Thickness Spread Angle", default=180.0, min=0.0, max=180.0)
@@ -379,6 +384,16 @@ class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
     target_collection: PointerProperty(
         name="Collection",
         description="Collection exported and inspected for bake targets",
+        type=bpy.types.Collection,
+    )
+    high_poly_collection: PointerProperty(
+        name="High Poly Collection",
+        description="Optional high poly collection exported as the Substance high definition source when Use Low As High is disabled",
+        type=bpy.types.Collection,
+    )
+    cage_collection: PointerProperty(
+        name="Cage Collection",
+        description="Optional cage collection exported as the Substance projection cage when Use Cage is enabled",
         type=bpy.types.Collection,
     )
     profile_id: StringProperty(
@@ -503,18 +518,18 @@ class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
     )
     high_scene_paths: StringProperty(
         name="High Poly Mesh Paths",
-        description="Reserved list of high poly scene files for a future workflow phase",
+        description="Exported high poly scene path used by the last generated bake plan",
         subtype="FILE_PATH",
         default="",
     )
     use_cage: BoolProperty(
         name="Use Cage",
-        description="Reserved cage toggle for a future workflow phase",
+        description="Use the selected Cage Collection as the projection cage for the bake",
         default=False,
     )
     cage_scene_path: StringProperty(
         name="Cage Mesh Path",
-        description="Reserved cage mesh path for a future workflow phase",
+        description="Exported cage scene path used by the last generated bake plan",
         subtype="FILE_PATH",
         default="",
     )
@@ -584,7 +599,7 @@ class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
     secondary_min_distance: FloatProperty(
         name="Min Occluder Distance",
         description="Ignore AO hits closer than this distance",
-        default=0.00001,
+        default=0.001,
         min=0.0,
     )
     secondary_max_distance: FloatProperty(
@@ -667,7 +682,7 @@ class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
     bent_secondary_min_distance: FloatProperty(
         name="Min Occluder Distance",
         description="Ignore bent-normal occluders closer than this distance",
-        default=0.00001,
+        default=0.001,
         min=0.0,
     )
     bent_secondary_max_distance: FloatProperty(
@@ -809,7 +824,7 @@ class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
     thickness_secondary_min_distance: FloatProperty(
         name="Min Occluder Distance",
         description="Ignore thickness hits closer than this distance",
-        default=0.00001,
+        default=0.001,
         min=0.0,
     )
     thickness_secondary_max_distance: FloatProperty(
