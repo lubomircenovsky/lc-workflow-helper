@@ -28,7 +28,7 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     presets: CollectionProperty(type=LCW_PG_WorkflowPreset)
-    active_preset_index: IntProperty(name="Active Preset", default=0)
+    active_preset_index: IntProperty(name="Active Preset", default=0, min=0)
     baker_profiles: CollectionProperty(type=LCW_PG_BakerProfile)
     active_baker_profile_index: IntProperty(
         name="Active Baker Profile",
@@ -64,9 +64,8 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        layout.label(text="LC Workflow helper stores workflow presets globally.")
-        layout.label(text="Use the N-panel to create, edit, and run presets.")
-        layout.label(text="Main category order is stored in each .blend file.")
+        layout.label(text="Workflow presets and main category order are stored in each .blend file.")
+        layout.label(text="Use the N-panel to create, edit, and run workflow presets.")
         box = layout.box()
         box.label(text="Bakers")
         box.prop(self, "substance_baker_executable")

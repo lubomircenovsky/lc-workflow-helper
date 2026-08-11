@@ -1075,6 +1075,11 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
         state = wm_state(context)
 
         box = layout.box()
+        box.prop(
+            scene_state(context),
+            "uv_rebuild_seams_on_switch",
+            icon="GROUP_UVS",
+        )
         row = box.row(align=True)
         _draw_action_button(row, context, "uv.set_active_uv1", "lcw.uv_set_active_1", text="UV1", icon="GROUP_UVS")
         _draw_action_button(row, context, "uv.set_active_uv2", "lcw.uv_set_active_2", text="UV2", icon="GROUP_UVS")
@@ -1190,6 +1195,16 @@ class LCW_PT_mesh_utilities(LCW_PT_base, bpy.types.Panel):
             _draw_action_button(row, context, "mesh.set_data_names", "lcw.mesh_set_data_names")
 
             tool = _simple_tool_box(section)
+            tool.label(
+                text="Batch-review numbered mesh copies before reconnecting original data.",
+                icon="INFO",
+            )
+            tool.operator(
+                "lcw.mesh_relink_original_data",
+                text="Relink Original Mesh Data",
+                icon="FILE_REFRESH",
+            )
+            tool = _simple_tool_box(section)
             row = tool.row(align=True)
             _draw_action_button(row, context, "mesh.clear_custom_normals", "lcw.mesh_clear_custom_normals")
 
@@ -1254,15 +1269,24 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        preferences = addon_preferences(context)
+        preset_state = context.scene.lcw_scene_state
+        try:
+            legacy_presets = addon_preferences(context).presets
+        except Exception:
+            legacy_presets = ()
 
+        layout.label(text="Presets are saved with this .blend file.", icon="FILE_BLEND")
+        scene_preset_names = {preset.name for preset in preset_state.presets}
+        has_missing_legacy_presets = any(preset.name not in scene_preset_names for preset in legacy_presets)
+        if has_missing_legacy_presets:
+            layout.operator("lcw.workflow_presets_import_global", text="Import Missing Legacy Presets", icon="IMPORT")
         row = layout.row()
         row.template_list(
             "LCW_UL_workflow_presets",
             "",
-            preferences,
+            preset_state,
             "presets",
-            preferences,
+            preset_state,
             "active_preset_index",
             rows=3,
         )
@@ -1274,17 +1298,21 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
         move = col.operator("lcw.workflow_preset_move", text="", icon="TRIA_DOWN")
         move.direction = "DOWN"
 
-        if not preferences.presets:
-            layout.label(text="Create a preset to build action chains.", icon="INFO")
+        preset_count = len(preset_state.presets)
+        if preset_count == 0:
+            layout.label(text="Create a preset to build action chains in this .blend file.", icon="INFO")
             return
 
-        preset_index = max(0, min(preferences.active_preset_index, len(preferences.presets) - 1))
-        preferences.active_preset_index = preset_index
-        preset = preferences.presets[preset_index]
-        layout.prop(preset, "name")
-        layout.operator("lcw.workflow_preset_run", icon="PLAY")
+        preset_index = max(0, min(preset_state.active_preset_index, preset_count - 1))
+        preset = preset_state.presets[preset_index]
+        preset_box = layout.box()
+        preset_box.label(text="Selected Preset", icon="PRESET")
+        preset_box.prop(preset, "name", text="Name")
+        preset_box.operator("lcw.workflow_preset_run", text="Run Workflow Preset", icon="PLAY")
 
-        row = layout.row()
+        actions_box = layout.box()
+        actions_box.label(text="Preset Actions", icon="PLAY")
+        row = actions_box.row()
         row.template_list(
             "LCW_UL_workflow_actions",
             "",
@@ -1301,12 +1329,15 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
         move.direction = "UP"
         move = col.operator("lcw.workflow_action_move", text="", icon="TRIA_DOWN")
         move.direction = "DOWN"
+        actions_box.operator("lcw.workflow_action_add", text="Add Action", icon="ADD")
 
-        if preset.actions:
-            action_index = max(0, min(preset.active_action_index, len(preset.actions) - 1))
-            preset.active_action_index = action_index
+        action_count = len(preset.actions)
+        if action_count == 0:
+            actions_box.label(text="Add an action to configure this preset.", icon="INFO")
+        else:
+            action_index = max(0, min(preset.active_action_index, action_count - 1))
             action = preset.actions[action_index]
-            box = layout.box()
+            box = actions_box.box()
             box.label(text="Action Settings")
             _draw_preset_action_settings(box, action)
 

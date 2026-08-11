@@ -84,6 +84,47 @@ ACTION_DEFINITIONS: tuple[ActionDefinition, ...] = (
     ActionDefinition("kalibra.space_vertices_axis", "Space Vertices with Axis Falloff", "lcw.kalibra_space_vertices_axis", "Kalibra Tools", ("axis_value", "float_value")),
 )
 
+ACTION_PARAMETER_NAMES = frozenset(
+    {
+        "axis_value",
+        "bool_value",
+        "bool_value_2",
+        "bool_value_3",
+        "color_blend",
+        "color_domain",
+        "color_mask",
+        "color_type",
+        "color_value",
+        "filepath_value",
+        "float_value",
+        "float_value_2",
+        "int_value",
+        "int_value_2",
+        "list_value",
+        "space_value",
+        "text_value",
+        "text_value_2",
+        "text_value_3",
+    }
+)
+
+
+def _validate_action_definitions(definitions: Iterable[ActionDefinition]) -> None:
+    seen_action_ids: set[str] = set()
+    for definition in definitions:
+        if definition.action_id in seen_action_ids:
+            raise ValueError(f"Duplicate workflow action id: {definition.action_id}")
+        seen_action_ids.add(definition.action_id)
+
+        unknown_params = set(definition.params) - ACTION_PARAMETER_NAMES
+        if unknown_params:
+            params = ", ".join(sorted(unknown_params))
+            raise ValueError(f"Unknown parameter(s) for workflow action {definition.action_id}: {params}")
+
+
+_validate_action_definitions(ACTION_DEFINITIONS)
+
+
 ACTION_ITEMS = tuple(
     (definition.action_id, f"{definition.category}: {definition.label}", "")
     for definition in ACTION_DEFINITIONS

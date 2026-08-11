@@ -1,8 +1,94 @@
 from __future__ import annotations
 
+import bmesh
 import bpy
 
-from ..utils.common import has_selected_mesh_objects, selected_mesh_objects
+from ..utils.common import has_selected_mesh_objects, scene_state, selected_mesh_objects
+
+
+UV_SEAM_TOLERANCE = 1e-6
+
+
+def _uv_samples_are_discontinuous(
+    samples: list[dict[int, tuple[float, float]]],
+    vertex_indices: tuple[int, int],
+) -> bool:
+    if len(samples) < 2:
+        return False
+
+    tolerance_squared = UV_SEAM_TOLERANCE * UV_SEAM_TOLERANCE
+    reference = samples[0]
+    for sample in samples[1:]:
+        for vertex_index in vertex_indices:
+            reference_uv = reference.get(vertex_index)
+            sample_uv = sample.get(vertex_index)
+            if reference_uv is None or sample_uv is None:
+                return True
+            delta_u = reference_uv[0] - sample_uv[0]
+            delta_v = reference_uv[1] - sample_uv[1]
+            if (delta_u * delta_u) + (delta_v * delta_v) > tolerance_squared:
+                return True
+    return False
+
+
+def _rebuild_object_mode_seams(mesh: bpy.types.Mesh, uv_layer_name: str) -> None:
+    uv_layer = mesh.uv_layers.get(uv_layer_name)
+    if uv_layer is None:
+        raise RuntimeError(f"UV layer '{uv_layer_name}' was not found.")
+
+    samples_by_edge: dict[int, list[dict[int, tuple[float, float]]]] = {
+        edge.index: [] for edge in mesh.edges
+    }
+    for polygon in mesh.polygons:
+        loop_indices = tuple(polygon.loop_indices)
+        for offset, loop_index in enumerate(loop_indices):
+            next_loop_index = loop_indices[(offset + 1) % len(loop_indices)]
+            loop = mesh.loops[loop_index]
+            next_loop = mesh.loops[next_loop_index]
+            samples_by_edge[loop.edge_index].append(
+                {
+                    loop.vertex_index: tuple(uv_layer.data[loop_index].uv),
+                    next_loop.vertex_index: tuple(uv_layer.data[next_loop_index].uv),
+                }
+            )
+
+    for edge in mesh.edges:
+        edge.use_seam = _uv_samples_are_discontinuous(
+            samples_by_edge[edge.index],
+            tuple(edge.vertices),
+        )
+    mesh.update()
+
+
+def _rebuild_edit_mode_seams(mesh: bpy.types.Mesh, uv_layer_name: str) -> None:
+    edit_mesh = bmesh.from_edit_mesh(mesh)
+    uv_layer = edit_mesh.loops.layers.uv.get(uv_layer_name)
+    if uv_layer is None:
+        raise RuntimeError(f"UV layer '{uv_layer_name}' was not found in Edit Mode.")
+
+    edit_mesh.verts.ensure_lookup_table()
+    for edge in edit_mesh.edges:
+        samples: list[dict[int, tuple[float, float]]] = []
+        for loop in edge.link_loops:
+            next_loop = loop.link_loop_next
+            samples.append(
+                {
+                    loop.vert.index: tuple(loop[uv_layer].uv),
+                    next_loop.vert.index: tuple(next_loop[uv_layer].uv),
+                }
+            )
+        edge.seam = _uv_samples_are_discontinuous(
+            samples,
+            (edge.verts[0].index, edge.verts[1].index),
+        )
+    bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
+
+
+def rebuild_uv_seams_from_layer(mesh: bpy.types.Mesh, uv_layer_name: str) -> None:
+    if mesh.is_editmode:
+        _rebuild_edit_mode_seams(mesh, uv_layer_name)
+    else:
+        _rebuild_object_mode_seams(mesh, uv_layer_name)
 
 
 def _ensure_uv_layers_to_index(obj: bpy.types.Object, target_index: int) -> None:
@@ -59,14 +145,37 @@ class LCW_OT_uv_set_active_channel(bpy.types.Operator):
         target_index = self.channel_number - 1
         updated = 0
         deselected = 0
+        rebuilt_meshes = 0
+        rebuild_failures = 0
+        processed_meshes: set[int] = set()
+        rebuild_seams = scene_state(context).uv_rebuild_seams_on_switch
+
         for obj in selected_mesh_objects(context):
             if len(obj.data.uv_layers) > target_index:
                 obj.data.uv_layers.active_index = target_index
                 updated += 1
+                mesh_pointer = obj.data.as_pointer()
+                if rebuild_seams and mesh_pointer not in processed_meshes:
+                    processed_meshes.add(mesh_pointer)
+                    try:
+                        rebuild_uv_seams_from_layer(
+                            obj.data,
+                            obj.data.uv_layers[target_index].name,
+                        )
+                        rebuilt_meshes += 1
+                    except (RuntimeError, ValueError):
+                        rebuild_failures += 1
             elif self.deselect_if_missing:
                 obj.select_set(False)
                 deselected += 1
-        self.report({"INFO"}, f"Updated {updated} object(s), deselected {deselected}.")
+
+        message = f"Updated {updated} object(s), deselected {deselected}."
+        if rebuild_seams:
+            message = (
+                f"{message} Rebuilt seams on {rebuilt_meshes} mesh datablock(s)"
+                f"{f'; {rebuild_failures} failed' if rebuild_failures else ''}."
+            )
+        self.report({"WARNING"} if rebuild_failures else {"INFO"}, message)
         return {"FINISHED"}
 
 
@@ -232,7 +341,7 @@ class LCW_OT_uv_remove_channel(bpy.types.Operator):
 class LCW_OT_uv_set_active_1(bpy.types.Operator):
     bl_idname = "lcw.uv_set_active_1"
     bl_label = "Set UV1 Active"
-    bl_description = "Runs on all selected mesh objects, sets UV1 active, and deselects objects that do not contain UV1"
+    bl_description = "Set UV1 active on selected mesh objects, optionally rebuild seams from its islands, and deselect objects without UV1"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -246,7 +355,7 @@ class LCW_OT_uv_set_active_1(bpy.types.Operator):
 class LCW_OT_uv_set_active_2(bpy.types.Operator):
     bl_idname = "lcw.uv_set_active_2"
     bl_label = "Set UV2 Active"
-    bl_description = "Runs on all selected mesh objects, sets UV2 active, and deselects objects that do not contain UV2"
+    bl_description = "Set UV2 active on selected mesh objects, optionally rebuild seams from its islands, and deselect objects without UV2"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -260,7 +369,7 @@ class LCW_OT_uv_set_active_2(bpy.types.Operator):
 class LCW_OT_uv_set_active_3(bpy.types.Operator):
     bl_idname = "lcw.uv_set_active_3"
     bl_label = "Set UV3 Active"
-    bl_description = "Runs on all selected mesh objects, sets UV3 active, and deselects objects that do not contain UV3"
+    bl_description = "Set UV3 active on selected mesh objects, optionally rebuild seams from its islands, and deselect objects without UV3"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod

@@ -18,7 +18,7 @@ This first version converts the original standalone scripts into a single Blende
 
 - modular operators instead of one monolithic script
 - session-only panel inputs for per-tool parameters
-- global workflow preset storage in add-on preferences
+- workflow presets stored in each `.blend` file
 - color picker based vertex color tools using Blender 4.2 `color_attributes`
 - file path inputs instead of hardcoded export paths
 
@@ -52,12 +52,25 @@ Behavior:
 - falls back to creating a local release `.zip` from the add-on contents
 - writes the output to `dist\`
 
+## Workflow Presets
+
+Workflow presets are saved with the current `.blend` file. If legacy global presets still exist in Add-on Preferences, the N-panel shows an `Import Missing Legacy Presets` button to copy them into the open scene without duplicating presets that already exist there.
+
+Manual persistence check:
+
+1. Create a workflow preset in the N-panel.
+2. Add at least one action and edit one visible action parameter.
+3. Save the `.blend` file.
+4. Close Blender and reopen the same `.blend` file.
+5. Confirm the preset, action list, and edited action parameter are still present.
+6. Run the preset once to confirm the saved action chain is executable.
+
 ## Development Notes
 
 - Target Blender version: `4.2 LTS`
 - Main UI location: `3D View > N-panel > LC Workflow`
 - Project-specific tools remain isolated in `Kalibra Tools`
-- Workflow presets are stored globally in Add-on Preferences
+- Workflow presets are stored in the current `.blend` file via scene state
 
 ## Validation Status
 
@@ -70,7 +83,7 @@ Runtime validation is still needed inside Blender 4.2 for:
 
 - registration and panel rendering
 - operator context edge cases
-- workflow preset execution chains
+- workflow preset execution chains and `.blend` persistence
 - project-specific `Kalibra Tools`
 
 ## Repository Layout

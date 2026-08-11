@@ -60,12 +60,25 @@ ACTION_ARGUMENTS = {
 }
 
 
-def _active_preset(preferences):
-    if not preferences.presets:
+def _copy_property_group_values(source, target) -> None:
+    for prop in source.bl_rna.properties:
+        identifier = prop.identifier
+        if identifier == "rna_type" or getattr(prop, "is_readonly", False):
+            continue
+        setattr(target, identifier, getattr(source, identifier))
+
+
+def _preset_state(context: bpy.types.Context):
+    return context.scene.lcw_scene_state
+
+
+def _active_preset(preset_state):
+    preset_count = len(preset_state.presets)
+    if preset_count == 0:
         return None
-    index = max(0, min(preferences.active_preset_index, len(preferences.presets) - 1))
-    preferences.active_preset_index = index
-    return preferences.presets[index]
+    index = max(0, min(preset_state.active_preset_index, preset_count - 1))
+    preset_state.active_preset_index = index
+    return preset_state.presets[index]
 
 
 def _invoke_operator(operator_id: str, kwargs: dict) -> set[str]:
@@ -101,11 +114,52 @@ class LCW_OT_workflow_preset_add(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
+        preset_state = _preset_state(context)
+        preset = preset_state.presets.add()
+        preset.name = f"Preset {len(preset_state.presets)}"
+        preset_state.active_preset_index = len(preset_state.presets) - 1
+        self.report({"INFO"}, "Added workflow preset to this .blend file.")
+        return {"FINISHED"}
+
+
+class LCW_OT_workflow_presets_import_global(bpy.types.Operator):
+    bl_idname = "lcw.workflow_presets_import_global"
+    bl_label = "Import Legacy Workflow Presets"
+    bl_description = "Copy missing legacy workflow presets from Add-on Preferences into this .blend file"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context: bpy.types.Context):
         preferences = addon_preferences(context)
-        preset = preferences.presets.add()
-        preset.name = f"Preset {len(preferences.presets)}"
-        preferences.active_preset_index = len(preferences.presets) - 1
-        self.report({"INFO"}, "Added workflow preset.")
+        preset_state = _preset_state(context)
+        if len(preferences.presets) == 0:
+            self.report({"WARNING"}, "No legacy global workflow presets found.")
+            return {"CANCELLED"}
+
+        existing_names = {preset.name for preset in preset_state.presets}
+        imported = 0
+        skipped = 0
+        for source_preset in preferences.presets:
+            if source_preset.name in existing_names:
+                skipped += 1
+                continue
+            target_preset = preset_state.presets.add()
+            target_preset.name = source_preset.name
+            target_preset.active_action_index = source_preset.active_action_index
+            for source_action in source_preset.actions:
+                target_action = target_preset.actions.add()
+                _copy_property_group_values(source_action, target_action)
+            existing_names.add(target_preset.name)
+            imported += 1
+
+        if imported == 0:
+            self.report({"WARNING"}, "All legacy global workflow presets already exist in this .blend file.")
+            return {"CANCELLED"}
+
+        preset_state.active_preset_index = max(0, len(preset_state.presets) - imported)
+        message = f"Imported {imported} workflow preset(s) into this .blend file."
+        if skipped:
+            message = f"{message} Skipped {skipped} existing preset(s)."
+        self.report({"INFO"}, message)
         return {"FINISHED"}
 
 
@@ -115,13 +169,13 @@ class LCW_OT_workflow_preset_remove(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        preset = _active_preset(preferences)
+        preset_state = _preset_state(context)
+        preset = _active_preset(preset_state)
         if preset is None:
             self.report({"WARNING"}, "No preset to remove.")
             return {"CANCELLED"}
-        preferences.presets.remove(preferences.active_preset_index)
-        preferences.active_preset_index = max(0, preferences.active_preset_index - 1)
+        preset_state.presets.remove(preset_state.active_preset_index)
+        preset_state.active_preset_index = max(0, preset_state.active_preset_index - 1)
         self.report({"INFO"}, "Removed workflow preset.")
         return {"FINISHED"}
 
@@ -134,13 +188,13 @@ class LCW_OT_workflow_preset_move(bpy.types.Operator):
     direction: bpy.props.EnumProperty(items=(("UP", "Up", ""), ("DOWN", "Down", "")))
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        index = preferences.active_preset_index
+        preset_state = _preset_state(context)
+        index = preset_state.active_preset_index
         new_index = index - 1 if self.direction == "UP" else index + 1
-        if new_index < 0 or new_index >= len(preferences.presets):
+        if new_index < 0 or new_index >= len(preset_state.presets):
             return {"CANCELLED"}
-        preferences.presets.move(index, new_index)
-        preferences.active_preset_index = new_index
+        preset_state.presets.move(index, new_index)
+        preset_state.active_preset_index = new_index
         return {"FINISHED"}
 
 
@@ -150,8 +204,8 @@ class LCW_OT_workflow_action_add(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        preset = _active_preset(preferences)
+        preset_state = _preset_state(context)
+        preset = _active_preset(preset_state)
         if preset is None:
             self.report({"WARNING"}, "Create a preset first.")
             return {"CANCELLED"}
@@ -173,9 +227,9 @@ class LCW_OT_workflow_action_remove(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        preset = _active_preset(preferences)
-        if preset is None or not preset.actions:
+        preset_state = _preset_state(context)
+        preset = _active_preset(preset_state)
+        if preset is None or len(preset.actions) == 0:
             self.report({"WARNING"}, "No action to remove.")
             return {"CANCELLED"}
         preset.actions.remove(preset.active_action_index)
@@ -192,9 +246,9 @@ class LCW_OT_workflow_action_move(bpy.types.Operator):
     direction: bpy.props.EnumProperty(items=(("UP", "Up", ""), ("DOWN", "Down", "")))
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        preset = _active_preset(preferences)
-        if preset is None or not preset.actions:
+        preset_state = _preset_state(context)
+        preset = _active_preset(preset_state)
+        if preset is None or len(preset.actions) == 0:
             return {"CANCELLED"}
         index = preset.active_action_index
         new_index = index - 1 if self.direction == "UP" else index + 1
@@ -211,12 +265,12 @@ class LCW_OT_workflow_preset_run(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context: bpy.types.Context):
-        preferences = addon_preferences(context)
-        preset = _active_preset(preferences)
+        preset_state = _preset_state(context)
+        preset = _active_preset(preset_state)
         if preset is None:
             self.report({"WARNING"}, "Create a preset first.")
             return {"CANCELLED"}
-        if not preset.actions:
+        if len(preset.actions) == 0:
             self.report({"WARNING"}, "Preset has no actions.")
             return {"CANCELLED"}
 
@@ -238,6 +292,7 @@ CLASSES = (
     LCW_UL_workflow_presets,
     LCW_UL_workflow_actions,
     LCW_OT_workflow_preset_add,
+    LCW_OT_workflow_presets_import_global,
     LCW_OT_workflow_preset_remove,
     LCW_OT_workflow_preset_move,
     LCW_OT_workflow_action_add,

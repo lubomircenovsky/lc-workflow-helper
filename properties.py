@@ -72,7 +72,7 @@ class LCW_PG_WorkflowActionItem(bpy.types.PropertyGroup):
 class LCW_PG_WorkflowPreset(bpy.types.PropertyGroup):
     name: StringProperty(name="Preset Name", default="New Preset")
     actions: CollectionProperty(type=LCW_PG_WorkflowActionItem)
-    active_action_index: IntProperty(name="Active Action", default=0)
+    active_action_index: IntProperty(name="Active Action", default=0, min=0)
 
 
 class LCW_PG_FavoriteAction(bpy.types.PropertyGroup):
@@ -900,6 +900,16 @@ class LCW_PG_SceneState(bpy.types.PropertyGroup):
     material_quick_name_2: StringProperty(name="Quick Name 2", default="")
     material_quick_name_3: StringProperty(name="Quick Name 3", default="")
     panel_order: StringProperty(name="Main Category Order", default=",".join(PANEL_ORDER_DEFAULT))
+    uv_rebuild_seams_on_switch: BoolProperty(
+        name="Rebuild Seams on UV Switch",
+        description=(
+            "After changing the active UV channel on selected objects, replace mesh seams "
+            "with the island boundaries from that UV map"
+        ),
+        default=False,
+    )
+    presets: CollectionProperty(type=LCW_PG_WorkflowPreset)
+    active_preset_index: IntProperty(name="Active Preset", default=0, min=0)
     favorite_actions: CollectionProperty(type=LCW_PG_FavoriteAction)
     substance_designer_baker: PointerProperty(type=LCW_PG_SubstanceDesignerBakeState)
 
