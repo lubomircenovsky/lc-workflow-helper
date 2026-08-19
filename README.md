@@ -11,16 +11,18 @@ The add-on groups tools into practical N-panel categories:
 - `Mesh Utilities`
 - `Workflow Presets`
 - `Kalibra Tools`
+- `Quad Reconstruction`
 
 ## Current Scope
 
-This first version converts the original standalone scripts into a single Blender Extension add-on with:
+The extension provides:
 
 - modular operators instead of one monolithic script
 - session-only panel inputs for per-tool parameters
 - workflow presets stored in each `.blend` file
 - color picker based vertex color tools using Blender 4.2 `color_attributes`
 - file path inputs instead of hardcoded export paths
+- deterministic batch quad reconstruction for triangulated and mixed meshes
 
 ## Installation
 
@@ -71,17 +73,30 @@ Manual persistence check:
 - Main UI location: `3D View > N-panel > LC Workflow`
 - Project-specific tools remain isolated in `Kalibra Tools`
 - Workflow presets are stored in the current `.blend` file via scene state
+- Quad Reconstruction user, developer and benchmark documentation is available in `docs/`
+
+## Quad Reconstruction
+
+The add-on includes deterministic offline reconstruction of likely quad topology for triangulated and mixed mesh collections. It creates independent output meshes, preserves hard boundaries, reports confidence and unresolved faces, and supports exact blossom matching for bounded regions plus a deterministic fallback for large regions.
+
+See:
+
+- `docs/quad-reconstruction-user-guide.md`
+- `docs/quad-reconstruction-developer-guide.md`
+- `docs/quad-reconstruction-benchmarks.md`
+- `quad_reconstruction/matching/DECISION.md`
 
 ## Validation Status
 
-Static validation completed:
+Automated validation completed:
 
 - Python modules compile successfully
-- add-on structure is ready for Blender Extension packaging
+- pure-core unit tests pass
+- registration, reconstruction, safety and validation fixtures pass in Blender 4.5.8 and 5.2.0 LTS
+- the extension manifest and packaged ZIP validate successfully
 
-Runtime validation is still needed inside Blender 4.2 for:
+Manual UI validation remains useful for:
 
-- registration and panel rendering
 - operator context edge cases
 - workflow preset execution chains and `.blend` persistence
 - project-specific `Kalibra Tools`
@@ -96,6 +111,8 @@ LC_workflow_addon/
   preferences.py
   properties.py
   operators/
+  quad_reconstruction/
+  docs/
   ui/
   utils/
   scripts/

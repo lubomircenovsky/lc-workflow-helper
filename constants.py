@@ -284,6 +284,7 @@ PANEL_ORDER_DEFAULT = (
     "colors",
     "uv",
     "mesh_utilities",
+    "quad_reconstruction",
     "workflow_presets",
     "kalibra_tools",
 )
@@ -297,6 +298,7 @@ PANEL_LABELS = {
     "colors": "Colors",
     "uv": "UV",
     "mesh_utilities": "Object and Mesh Utilities",
+    "quad_reconstruction": "Quad Reconstruction",
     "workflow_presets": "Workflow Presets",
     "kalibra_tools": "Kalibra Tools",
 }

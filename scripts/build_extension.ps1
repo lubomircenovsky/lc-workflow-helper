@@ -49,6 +49,8 @@ $IncludePaths = @(
     "constants.py",
     "preferences.py",
     "properties.py",
+    "quad_reconstruction",
+    "docs",
     "operators",
     "ui",
     "utils"
