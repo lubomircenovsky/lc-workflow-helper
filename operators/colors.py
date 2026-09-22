@@ -4,7 +4,29 @@ import bpy
 
 from ..constants import COLOR_BLEND_ITEMS, COLOR_DOMAIN_ITEMS, COLOR_MASK_ITEMS, COLOR_TYPE_ITEMS
 from ..utils.color_attributes import blend_rgba, ensure_color_attribute, get_attribute_rgba, set_attribute_rgba
-from ..utils.common import has_selected_mesh_objects, selected_mesh_objects
+from ..utils.common import (
+    has_selected_mesh_objects,
+    scene_state,
+    selected_mesh_objects,
+    wm_state,
+)
+
+
+class LCW_OT_vertex_color_palette_activate(bpy.types.Operator):
+    bl_idname = "lcw.vertex_color_palette_activate"
+    bl_label = "Use Palette Color"
+    bl_description = "Make this blend-file palette slot the active Apply Vertex Colors color"
+    bl_options = {"INTERNAL"}
+
+    slot: bpy.props.IntProperty(name="Palette Slot", min=1, max=5, default=1)
+
+    def execute(self, context: bpy.types.Context):
+        palette = scene_state(context)
+        active = wm_state(context)
+        active.color_value = tuple(
+            getattr(palette, f"vertex_color_palette_{self.slot}")
+        )
+        return {"FINISHED"}
 
 
 class LCW_OT_color_attribute_initialize(bpy.types.Operator):
@@ -123,6 +145,7 @@ class LCW_OT_color_attribute_apply(bpy.types.Operator):
 
 
 CLASSES = (
+    LCW_OT_vertex_color_palette_activate,
     LCW_OT_color_attribute_initialize,
     LCW_OT_color_attribute_apply,
 )

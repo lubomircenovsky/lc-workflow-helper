@@ -908,6 +908,51 @@ class LCW_PG_SceneState(bpy.types.PropertyGroup):
         ),
         default=False,
     )
+    vertex_color_palette_1: FloatVectorProperty(
+        name="Palette Color 1",
+        description="Blend-file color slot 1; use the adjacent button to make it active",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(0.0, 0.0, 0.0, 1.0),
+    )
+    vertex_color_palette_2: FloatVectorProperty(
+        name="Palette Color 2",
+        description="Blend-file color slot 2; use the adjacent button to make it active",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0, 1.0),
+    )
+    vertex_color_palette_3: FloatVectorProperty(
+        name="Palette Color 3",
+        description="Blend-file color slot 3; use the adjacent button to make it active",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 0.0, 0.0, 1.0),
+    )
+    vertex_color_palette_4: FloatVectorProperty(
+        name="Palette Color 4",
+        description="Blend-file color slot 4; use the adjacent button to make it active",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(0.0, 1.0, 0.0, 1.0),
+    )
+    vertex_color_palette_5: FloatVectorProperty(
+        name="Palette Color 5",
+        description="Blend-file color slot 5; use the adjacent button to make it active",
+        subtype="COLOR_GAMMA",
+        size=4,
+        min=0.0,
+        max=1.0,
+        default=(0.0, 0.0, 1.0, 1.0),
+    )
     presets: CollectionProperty(type=LCW_PG_WorkflowPreset)
     active_preset_index: IntProperty(name="Active Preset", default=0, min=0)
     favorite_actions: CollectionProperty(type=LCW_PG_FavoriteAction)

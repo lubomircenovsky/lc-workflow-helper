@@ -1012,6 +1012,7 @@ class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
         state = wm_state(context)
+        file_state = scene_state(context)
 
         box = _draw_collapsible_tool(
             layout,
@@ -1050,6 +1051,20 @@ class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
         )
         if box:
             box.label(text=f"Target Attribute: {state.color_attribute_name}", icon="GROUP_VCOL")
+            palette = box.row(align=True)
+            for slot_index in range(1, 6):
+                slot = palette.row(align=True)
+                slot.prop(
+                    file_state,
+                    f"vertex_color_palette_{slot_index}",
+                    text="",
+                )
+                activate = slot.operator(
+                    "lcw.vertex_color_palette_activate",
+                    text="",
+                    icon="CHECKMARK",
+                )
+                activate.slot = slot_index
             box.prop(state, "color_value")
             box.prop(state, "color_mask_type")
             box.prop(state, "color_blend_mode")
