@@ -8,6 +8,7 @@ from ..quad_reconstruction.panels import (
     LCW_PT_quad_reconstruction,
     LCW_UL_quad_analysis_results,
 )
+from ..cad_reconstruction.panels import LCW_PT_cad_reconstruction
 from ..operators.favorites import favorite_action_available
 from ..utils.substance_designer_baker import BAKER_DEFINITIONS, get_export_source
 from ..utils.common import addon_preferences, is_favorite_action, scene_state, wm_state
@@ -1517,6 +1518,7 @@ PANEL_CLASS_MAP = {
     "uv": LCW_PT_uv,
     "mesh_utilities": LCW_PT_mesh_utilities,
     "quad_reconstruction": LCW_PT_quad_reconstruction,
+    "cad_reconstruction": LCW_PT_cad_reconstruction,
     "workflow_presets": LCW_PT_workflow_presets,
     "kalibra_tools": LCW_PT_kalibra_tools,
 }
@@ -1534,6 +1536,7 @@ CLASSES = (
     LCW_PT_uv,
     LCW_PT_mesh_utilities,
     LCW_PT_quad_reconstruction,
+    LCW_PT_cad_reconstruction,
     LCW_PT_workflow_presets,
     LCW_PT_kalibra_tools,
 )

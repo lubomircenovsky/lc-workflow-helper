@@ -50,6 +50,8 @@ $IncludePaths = @(
     "preferences.py",
     "properties.py",
     "quad_reconstruction",
+    "cad_mesh_tool",
+    "cad_reconstruction",
     "docs",
     "operators",
     "ui",

@@ -13,7 +13,7 @@ GENERATED_MARKER = "lcw_aiq_generated"
 RUN_ID_PROPERTY = "lcw_aiq_run_id"
 SOURCE_UUID_PROPERTY = "lcw_aiq_source_uuid"
 SOURCE_NAME_PROPERTY = "lcw_aiq_source_name"
-ADDON_VERSION = "0.4.0"
+ADDON_VERSION = "0.5.0"
 
 def _child_collections(collection: bpy.types.Collection):
     for child in collection.children:

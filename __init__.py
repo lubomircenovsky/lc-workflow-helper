@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import preferences, properties, quad_reconstruction
+from . import cad_reconstruction, preferences, properties, quad_reconstruction
 from .operators import MODULES as OPERATOR_MODULES
 from .ui import MODULES as UI_MODULES
 
@@ -13,6 +13,7 @@ def _iter_non_ui_classes():
     for module in OPERATOR_MODULES:
         yield from module.CLASSES
     yield from quad_reconstruction.non_ui_classes()
+    yield from cad_reconstruction.non_ui_classes()
 
 
 def _iter_ui_classes():
@@ -58,6 +59,7 @@ def _safe_unregister_classes(classes) -> None:
 def _cleanup_partial_registration() -> None:
     _unregister_handlers()
     quad_reconstruction.unregister_properties()
+    cad_reconstruction.unregister_properties()
     properties.unregister_properties()
     _safe_unregister_classes(_iter_ui_classes())
     _safe_unregister_classes(_iter_non_ui_classes())
@@ -72,6 +74,7 @@ def register() -> None:
             registered_classes.append(cls)
         properties.register_properties()
         quad_reconstruction.register_properties()
+        cad_reconstruction.register_properties()
         _prepare_ui_register()
         for cls in _iter_ui_classes():
             bpy.utils.register_class(cls)
@@ -80,6 +83,7 @@ def register() -> None:
     except Exception:
         _unregister_handlers()
         quad_reconstruction.unregister_properties()
+        cad_reconstruction.unregister_properties()
         properties.unregister_properties()
         _safe_unregister_classes(registered_classes)
         raise
@@ -88,6 +92,7 @@ def register() -> None:
 def unregister() -> None:
     _unregister_handlers()
     quad_reconstruction.unregister_properties()
+    cad_reconstruction.unregister_properties()
     properties.unregister_properties()
     _safe_unregister_classes(_iter_ui_classes())
     _safe_unregister_classes(_iter_non_ui_classes())

@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "lc_workflow_helper"
-version = "0.4.0"
+version = "0.5.0"
 name = "LC Workflow helper"
 tagline = "Workflow helpers for LC Blender production tasks"
 maintainer = "Lubomir"
@@ -14,7 +14,7 @@ license = [
 ]
 
 [permissions]
-files = "Export CSV files and extension packages to disk"
+files = "Export CAD runs, reports, CSV files, and extension archives"
 
 [build]
 paths_exclude_pattern = [
