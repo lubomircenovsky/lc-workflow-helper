@@ -30,9 +30,11 @@ def complete_cylinders(vertices,faces,features,epsilon=.0004):
         bd=sorted({i for e in boundary for i in e});rims=[[i for i in bd if abs(p[i,2]-level)<1e-6] for level in (lo,hi)]
         angles=np.sort(np.unique(np.round(np.arctan2(p[ids,1]-c[1],p[ids,0]-c[0]),7)))
         gaps=np.diff(np.r_[angles,angles[0]+2*math.pi]);k=int(np.argmax(gaps))
-        start=0. if cy['full'] else float(angles[(k+1)%len(angles)]);span=2*math.pi if cy['full'] else float(2*math.pi-gaps[k])
+        start=float(angles[0]) if cy['full'] else float(angles[(k+1)%len(angles)]);span=2*math.pi if cy['full'] else float(2*math.pi-gaps[k])
+        old_segments=min(map(len,rims))-(0 if cy['full'] else 1)
+        if old_segments<3:continue
         cy.update(faces=fs,vertices=ids,boundary=boundary,center=c.tolist(),radius=r,residual=res,lo=lo,hi=hi,start=start,span=span,
-                  segments=segment_count(r,span,cy['full'],epsilon,res),segments_before=min(map(len,rims))-(0 if cy['full'] else 1),
+                  segments=min(segment_count(r,span,cy['full'],epsilon,res),old_segments),segments_before=old_segments,
                   support_faces_added=len(fs)-len(cy['faces']))
         for f in fs:claimed[f]=cy['id']
     return features
@@ -114,7 +116,7 @@ def discover(vertices, faces, epsilon=.0004):
                 angles=np.sort(np.unique(np.round(np.arctan2(p[ids,1]-c[1],p[ids,0]-c[0]),7)))
                 gaps=np.diff(np.r_[angles,angles[0]+2*math.pi]); k=int(np.argmax(gaps))
                 start=float(angles[(k+1)%len(angles)]);span=float(2*math.pi-gaps[k])
-                if full:start=0.;span=2*math.pi
+                if full:start=float(angles[0]);span=2*math.pi
                 if span<math.radians(5):continue
                 # Every boundary vertex must lie on a rim or the start/end rail.
                 bd=sorted({i for e in boundary for i in e})
@@ -128,8 +130,8 @@ def discover(vertices, faces, epsilon=.0004):
                 rad[:,:2]=np.array([p[faces[f],:2].mean(0)-c for f in fs])
                 score=np.sum(np.sum((normals[fs]@frame.T)*rad,axis=1))
                 sign=1 if score>0 else -1
-                n=segment_count(r,span,full,epsilon,res)
                 old_segments=min(map(len,rims))-(0 if full else 1)
+                n=min(segment_count(r,span,full,epsilon,res),old_segments)
                 category='circular_hole' if full and sign<0 else 'outer_cylinder' if full else 'concave_arc' if sign<0 else 'convex_arc'
                 record=dict(faces=fs,vertices=ids,boundary=boundary,frame=frame.tolist(),origin=center.tolist(),center=c.tolist(),radius=r,residual=res,lo=lo,hi=hi,start=start,span=span,full=full,sign=sign,segments=n,segments_before=old_segments,category=category)
                 key=tuple(fs)

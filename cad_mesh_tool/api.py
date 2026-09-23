@@ -12,19 +12,21 @@ def code_hash():
     return hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sorted(root.glob('*.py')))).hexdigest()
 
 
-def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None):
+def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operations=None):
     obj=obj or bpy.context.active_object
     if obj is None:raise ValueError('Select a source mesh')
     root=Path(run_dir)
     if (root/'source.json').exists():raise FileExistsError('Use a new run directory; existing input is immutable')
     if epsilon_mm<=0:raise ValueError('epsilon_mm must be positive')
     from .straight_walls import settings
+    from .operations import normalize
     wall_settings=settings(straight_walls)
+    selected_operations=normalize(operations)
     snapshot=capture(obj);root.mkdir(parents=True,exist_ok=True)
     profile=dict(tool_version=__version__,code_hash=code_hash(),epsilon_m=epsilon_mm/1000,
                  method='A',delivery='EDITABLE_NGONS',source_name=obj.name,source_hash=snapshot['source_hash'],
                  unit_scale=snapshot['unit_scale'],sample_count=20000,coverage_status='REQUIRES_REVIEW',straight_walls=wall_settings,
-                 compound_perimeter_policy='straight_strips_v1')
+                 compound_perimeter_policy='straight_strips_v1',operations=selected_operations)
     (root/'source.json').write_text(json.dumps(snapshot),encoding='utf-8')
     (root/'profile.json').write_text(json.dumps(profile,indent=2),encoding='utf-8')
     print('Prepared immutable source:',root)
@@ -50,7 +52,8 @@ def apply_result(run_dir, *, include_checkpoint=True):
     if hashlib.sha256(blend.read_bytes()).hexdigest()!=manifest['result_sha256']:raise ValueError('Result artifact hash mismatch')
     existing=[c for c in bpy.data.collections if c.get('cad_tool_run')==str(root.resolve())]
     if existing:return [o.name for c in existing for o in c.objects]
-    object_names = [n for n in manifest['objects'] if include_checkpoint or review or n != 'CAD_Checkpoint']
+    object_names = [n for n in manifest['objects']
+                    if include_checkpoint or review or not n.startswith('CAD_Checkpoint')]
     with bpy.data.libraries.load(str(blend),link=False) as (data_from,data_to):
         data_to.objects=[n for n in data_from.objects if n in object_names]
     if len(data_to.objects)!=(1 if review or not include_checkpoint else 2) or any(o is None for o in data_to.objects):raise ValueError('Result library incomplete')

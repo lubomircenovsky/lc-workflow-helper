@@ -2,24 +2,44 @@
 import hashlib,json,math
 import bpy,bmesh,numpy as np
 
-ROLES=['UNCLASSIFIED','DETAIL_REBUILT','PERIMETER_RING','BACKGROUND_PLANE','PROTECTED_OTHER','PERIMETER_STRAIGHT']
+ROLES=['UNCLASSIFIED','DETAIL_REBUILT','PERIMETER_RING','BACKGROUND_PLANE','PROTECTED_OTHER','PERIMETER_STRAIGHT','LOCKED_FEATURE']
+
+
+def source_topology(obj):
+    from .geometry import topology
+    return topology([list(poly.vertices) for poly in obj.data.polygons])
+
+
+def topology_problem(obj):
+    counts=source_topology(obj)
+    problems={key:counts[key] for key in ('boundary','nonmanifold','winding','duplicates') if counts[key]}
+    if not problems:return ''
+    detail=', '.join(f'{key}={count}' for key,count in problems.items())
+    return f'{obj.name}: CAD source must be a closed manifold mesh ({detail}). Merge split vertices if needed, then repair and inspect the remaining topology.'
 
 
 def fingerprint(obj):
+    role=obj.data.attributes.get('cad_role')
     data=dict(v=[list(v.co) for v in obj.data.vertices],f=[list(p.vertices) for p in obj.data.polygons],
               n=[list(n.vector) for n in obj.data.corner_normals],matrix=[list(r) for r in obj.matrix_world],
-              materials=[p.material_index for p in obj.data.polygons])
+              materials=[p.material_index for p in obj.data.polygons],
+              cad_role=[value.value for value in role.data] if role and role.domain=='FACE' and role.data_type=='INT' else None)
     return hashlib.sha256(json.dumps(data,separators=(',',':')).encode()).hexdigest()
 
 
 def capture(obj):
     if obj.type!='MESH' or obj.modifiers:raise ValueError('Requires a mesh without unevaluated modifiers')
     if bpy.context.mode!='OBJECT':raise ValueError('Object mode required')
+    problem=topology_problem(obj)
+    if problem:raise ValueError(problem)
     obj.data.calc_loop_triangles();scale=bpy.context.scene.unit_settings.scale_length
     m=np.array(obj.matrix_world,dtype=float);v=np.array([v.co[:] for v in obj.data.vertices]);n=np.array([n.vector[:] for n in obj.data.corner_normals])@np.linalg.inv(m[:3,:3]);n/=np.maximum(np.linalg.norm(n,axis=1)[:,None],1e-30)
+    role=obj.data.attributes.get('cad_role')
     return dict(name=obj.name,source_hash=fingerprint(obj),unit_scale=scale,vertices=((v@m[:3,:3].T+m[:3,3])*scale).tolist(),
                 faces=[list(p.vertices) for p in obj.data.polygons],triangles=[list(t.vertices) for t in obj.data.loop_triangles],
-                normals=n.tolist(),materials=[p.material_index for p in obj.data.polygons],matrix=m.tolist())
+                normals=n.tolist(),materials=[p.material_index for p in obj.data.polygons],matrix=m.tolist(),
+                cad_roles=[ROLES[value.value] for value in role.data]
+                if role and role.domain=='FACE' and role.data_type=='INT' else None)
 
 
 def make_mesh(candidate,name):

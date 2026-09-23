@@ -119,31 +119,74 @@ def choose_perimeter(hole,outer,obstacles,radius=None,center=None):
                 q=annulus_quality(sq,hole)
                 attempts.append(dict(degree=degree,size=size,divisions=divisions,q=q))
                 if q<=20:return sq,attempts
-    raise ValueError('UNRESOLVED_PERIMETER: '+str(attempts))
+    return None,attempts
 
 
-def reconstruct(snapshot,features):
+def select_rim_samples(ids,theta,count,span,full):
+    """Choose distinct rim vertices in order with minimum angular error."""
+    ordered=sorted(ids,key=lambda i:(theta[i],i));m=len(ordered)
+    if count>m:raise ValueError('Too few independent rim samples')
+    targets=[span*k/(count if full else count-1) for k in range(count)]
+    costs=[float('inf')]*m;costs[0]=0.;parents=[]
+    for k in range(1,count):
+        next_costs=[float('inf')]*m;previous=[-1]*m
+        best=float('inf');best_index=-1
+        for j in range(k,m-(count-k)+1):
+            i=j-1
+            if costs[i]<best:best=costs[i];best_index=i
+            distance=abs(theta[ordered[j]]-targets[k])
+            if full:distance=min(distance,2*math.pi-distance)
+            next_costs[j]=best+distance*distance;previous[j]=best_index
+        costs=next_costs;parents.append(previous)
+    end=min(range(count-1,m),key=lambda j:(costs[j],j)) if full else m-1
+    if not math.isfinite(costs[end]):raise ValueError('No ordered rim sample mapping')
+    selected=[end]
+    for previous in reversed(parents):selected.append(previous[selected[-1]])
+    return [ordered[j] for j in reversed(selected)]
+
+
+def rim_aliases(ids, row, theta, full):
+    """Map each source sample to an ordered retained sample, keeping anchors fixed."""
+    selected=set(row)
+    aliases={}
+    for vi in ids:
+        if vi in selected:
+            aliases[vi]=vi
+            continue
+        def distance(k):
+            delta=abs(theta[vi]-theta[row[k]])
+            return min(delta,2*math.pi-delta) if full else delta
+        aliases[vi]=row[min(range(len(row)),key=lambda k:(distance(k),k))]
+    return aliases
+
+
+def reconstruct(snapshot,features,operations=None):
+    from .operations import normalize
+    operations=normalize(operations)
     V=np.array(snapshot['vertices'],dtype=float);F=snapshot['faces'];vertices=V.tolist()
     normals=face_normals(V,F);ef,adj=adjacency(F)
     keep=np.ones(len(V),dtype=bool);changed=set();grids={};fullrings={};claimed=set();rim_alias={};rail_points={}
+    protected_faces={fi for feature in features if feature.get('decision','REBUILD')!='REBUILD' for fi in feature['faces']}
+    perimeter_only=[feature for feature in features if feature.get('decision')=='PERIMETER_ONLY']
+    perimeter_vertices=set()
+    review_features=[dict(id=feature['id'],category=feature['category'],group='CAD_Skipped',
+                          reason=feature.get('skip_reason','This feature could not be reconstructed safely'),
+                          source_vertices=feature['vertices'])
+                     for feature in features if feature.get('decision')=='SKIP']
     CY=[c for c in features if c.get('decision','REBUILD')=='REBUILD']
     for cy in CY:
         if claimed.intersection(cy['faces']):raise ValueError('Overlapping cylinder ownership')
         claimed.update(cy['faces'])
         frame=np.array(cy['frame']);origin=np.array(cy['origin']);p=(V-origin)@frame.T
-        c=np.array(cy['center']);n=cy['segments'];boundary=sorted({i for e in cy['boundary'] for i in e});rows=[];chosen=set()
+        c=np.array(cy['center']);n=cy['segments'];boundary=sorted({i for e in cy['boundary'] for i in e});rows=[];chosen=set();avoided_move=0.
         for ids,end_normal,end_d in cylinder_rims(cy,p):
             level=float(p[ids,2].mean())
             theta={i:float((math.atan2(p[i,1]-c[1],p[i,0]-c[0])-cy['start'])%(2*math.pi)) for i in ids}
             theta={i:0. if abs(a-2*math.pi)<1e-4 else a for i,a in theta.items()}
-            row=[]
-            for k in range(n if cy['full'] else n+1):
+            row=select_rim_samples(ids,theta,n if cy['full'] else n+1,cy['span'],cy['full'])
+            preserve_samples=len(row)==len(ids)
+            for k,vi in enumerate(row):
                 angle=cy['span']*k/n
-                def distance(i):
-                    d=abs(theta[i]-angle)
-                    return min(d,2*math.pi-d) if cy['full'] else d
-                vi=min(ids,key=distance)
-                if vi in row:raise ValueError('Too few independent rim samples for requested reconstruction: '+str((cy['id'],len(ids),n,level,cy['category'])))
                 if cy['full'] or k not in (0,n):
                     a=cy['start']+angle;xy=c+cy['radius']*np.array([math.cos(a),math.sin(a)])
                     if end_normal is None:
@@ -151,17 +194,16 @@ def reconstruct(snapshot,features):
                         z=float(np.interp(angle,[theta[i] for i in ordered],p[ordered,2]))
                     else:z=(end_d-end_normal[:2]@xy)/end_normal[2]
                     target=np.array([*xy,z])@frame+origin
-                    if vi in changed and np.linalg.norm(np.array(vertices[vi])-target)>1e-6:raise ValueError('Conflicting shared analytic endpoint')
-                    vertices[vi]=target.tolist();changed.add(vi)
-                row.append(vi);chosen.add(vi)
+                    if preserve_samples:
+                        avoided_move=max(avoided_move,float(np.linalg.norm(target-V[vi])))
+                    else:
+                        if vi in changed and np.linalg.norm(np.array(vertices[vi])-target)>1e-6:raise ValueError('Conflicting shared analytic endpoint')
+                        vertices[vi]=target.tolist();changed.add(vi)
+                chosen.add(vi)
             rows.append(row)
             # The same rim also bounds nonplanar transition surfaces. Those
             # surfaces need a consistent edge contraction, not deleted corners.
-            for vi in ids:
-                def sample_distance(k):
-                    d=abs(theta[vi]-cy['span']*k/n)
-                    return min(d,2*math.pi-d) if cy['full'] else d
-                replacement=row[min(range(len(row)),key=sample_distance)]
+            for vi,replacement in rim_aliases(ids,row,theta,cy['full']).items():
                 if vi in rim_alias and rim_alias[vi]!=replacement:
                     raise ValueError('Conflicting shared transition rim mapping')
                 rim_alias[vi]=replacement
@@ -173,9 +215,39 @@ def reconstruct(snapshot,features):
         for vi in cy['vertices']:
             if vi not in chosen:keep[vi]=False
         grids[cy['id']]=rows
+        if avoided_move>max(.001,.05*cy['radius']):
+            review_features.append(dict(id=cy['id'],category=cy['category'],group='CAD_Review_Constrained',
+                                        reason='Original uneven rim samples retained to avoid large displacement',
+                                        avoided_displacement_m=avoided_move,source_vertices=cy['vertices']))
     retained={i for rows in grids.values() for row in rows for i in row}
     if any(not keep[i] for i in retained):raise ValueError('Shared retained/deleted vertex conflict')
     changed.update(np.flatnonzero(~keep).tolist())
+    skipped=[feature for feature in features if feature.get('decision')=='SKIP']
+    if skipped:
+        vertex_faces={vi:set() for vi in range(len(V))}
+        for fi,face in enumerate(F):
+            for vi in face:vertex_faces[vi].add(fi)
+        for feature in skipped:
+            region=set(feature['faces']);frontier=set(feature['vertices'])
+            while True:
+                adjacent={fi for vi in frontier for fi in vertex_faces[vi]}
+                added={fi for fi in adjacent-region if changed.intersection(F[fi])}
+                if not added:break
+                region.update(added)
+                frontier.update(vi for fi in added for vi in F[fi])
+            protected_faces.update(region)
+            for item in review_features:
+                if item['id']==feature['id'] and item['group']=='CAD_Skipped':
+                    item['source_vertices']=sorted({vi for fi in region for vi in F[fi]})
+                    item['source_faces']=sorted(region)
+        if claimed.intersection(protected_faces):
+            raise ValueError('Protected dependency conflicts with selected feature')
+    for cy in perimeter_only:
+        frame=np.array(cy['frame']);p=(V-cy['origin'])@frame.T
+        for ids,_,_ in cylinder_rims(cy,p):
+            fullrings[frozenset(ids)]=(cy,list(ids))
+            perimeter_vertices.update(ids)
+    claimed.update(protected_faces)
     groups=planar_regions(V,F,normals,adj,claimed)
     corners=np.array(snapshot['normals']);off=np.cumsum([0]+[len(f) for f in F])
     outfaces=[];outnormals=[];roles=[];tags=[];materials=[];patches=[];perimeters=[];transitions=[];split_edges={}
@@ -184,10 +256,13 @@ def reconstruct(snapshot,features):
         outfaces.append(list(map(int,ids)));outnormals.append(np.asarray(ns).tolist());roles.append(role);tags.append(tag);materials.append(int(mat))
     def point(p):vertices.append(np.asarray(p).tolist());return len(vertices)-1
     for gid,fs in enumerate(groups):
-        touched=any(changed.intersection(F[fi]) for fi in fs)
+        touched=any((changed|perimeter_vertices).intersection(F[fi]) for fi in fs)
         if not touched:
             # Regions untouched by reconstruction are not automatically eligible for dissolve.
-            for fi in fs:add(F[fi],corners[off[fi]:off[fi+1]],'PROTECTED_OTHER','retained',snapshot['materials'][fi])
+            role='BACKGROUND_PLANE' if operations['background_cleanup'] and not CY and not perimeter_only else 'PROTECTED_OTHER'
+            for fi in fs:
+                source_role=(snapshot.get('cad_roles') or [])[fi] if snapshot.get('cad_roles') else role
+                add(F[fi],corners[off[fi]:off[fi+1]],source_role,'retained',snapshot['materials'][fi])
             continue
         normal=normals[fs[0]];origin=V[F[fs[0]][0]];frame=basis(normal)
         ids=sorted({i for fi in fs for i in F[fi]})
@@ -232,7 +307,8 @@ def reconstruct(snapshot,features):
             if len(set(mapped))!=len(mapped):raise ValueError('Planar boundary contraction creates a self-touching contour')
             newloops.append(mapped)
         if any(len(ring)<3 for ring in newloops):raise ValueError('Collapsed incident patch')
-        order=sorted(range(len(newloops)),key=lambda k:-abs(area(newloops[k])))
+        # Identify the outer boundary before rim contraction changes loop area.
+        order=sorted(range(len(oldloops)),key=lambda k:-abs(area(oldloops[k])))
         oldloops=[oldloops[k] for k in order];newloops=[newloops[k] for k in order]
         outer=np.array([uv(i) for i in newloops[0]]);outside=[newloops[0]];annuli=[];squares=[];layouts=[]
         # Plan larger features first, reserving enough clearance for a minimum
@@ -240,7 +316,7 @@ def reconstruct(snapshot,features):
         hole_pairs=sorted(zip(oldloops[1:],newloops[1:]),key=lambda pair:-abs(area(pair[1])))
         processed=set()
         for old,ring in hole_pairs:
-            entry=fullrings.get(frozenset(old));affected=any(set(old)&set(cy['vertices']) for cy in CY)
+            entry=fullrings.get(frozenset(old));affected=bool(entry) or any(set(old)&set(cy['vertices']) for cy in CY)
             if not affected:outside.append(ring);continue
             hole=np.array([uv(i) for i in ring]);obstacles=[]
             for other_old,other_ring in hole_pairs:
@@ -273,7 +349,40 @@ def reconstruct(snapshot,features):
             if entry:
                 cy=entry[0];cp=np.array([*cy['center'],np.mean([(V[i]-cy['origin'])@np.array(cy['frame'])[2] for i in old])])@np.array(cy['frame'])+cy['origin']
                 center=((cp-origin)@frame.T)[:2]
-            sq,attempts=sparse if sparse is not None else choose_perimeter(hole,outer,obstacles,radius,center)
+            if radius is not None and not operations['perimeter_loops']:
+                sq,attempts=None,[]
+            else:
+                sq,attempts=sparse if sparse is not None else choose_perimeter(hole,outer,obstacles,radius,center)
+            if sq is None:
+                boundary_limited=radius is not None and (not operations['perimeter_loops'] or
+                                 bool(attempts) and all(a.get('rejected')=='outer_boundary' for a in attempts))
+                outside_vertices=sum(not inside(x,outer) for x in hole)
+                touches_outer=contacts(hole,outer)
+                clear_outer=not outside_vertices and not touches_outer
+                clear_obstacles=not any(contacts(hole,o) or any(inside(x,hole) for x in o) or inside(hole[0],o) for o in obstacles)
+                if not boundary_limited or not clear_outer or not clear_obstacles:
+                    source_outer=np.array([uv(i) for i in oldloops[0]])
+                    source_hole=np.array([uv(i) for i in old])
+                    source_outside=sum(not inside(x,source_outer) for x in source_hole)
+                    hole_center=np.mean(V[old],axis=0).round(5).tolist()
+                    loop_areas=[round(area(loop),8) for loop in oldloops]
+                    outer_remapped=sum(rim_alias.get(i,i)!=i for i in oldloops[0])
+                    outer_removed=sum(not keep[i] for i in oldloops[0])
+                    loop_lengths=[(len(a),len(b)) for a,b in zip(oldloops,newloops)]
+                    message=(f'UNRESOLVED_PERIMETER: patch={gid}, radius={radius}, '
+                                     f'outer_clear={clear_outer}, outside_vertices={outside_vertices}, '
+                                     f'source_outside_vertices={source_outside}, '
+                                     f'hole_center_local={hole_center}, loop_areas={loop_areas}, '
+                                     f'loop_lengths={loop_lengths}, outer_remapped={outer_remapped}, outer_removed={outer_removed}, '
+                                     f'touches_outer={touches_outer}, obstacles_clear={clear_obstacles}, '
+                                     f'attempts={len(attempts)}, last={attempts[-1] if attempts else None}')
+                    raise ValueError(message)
+                outside.append(ring)
+                perimeters.append(dict(patch=gid,ids=[],hole=ring,attempts=attempts,
+                                       kind='circular',layout='direct_join',strips=[],
+                                       feature_id=entry[0]['id'] if entry else None))
+                processed.add(frozenset(old))
+                continue
             square=[point(origin+x[0]*frame[0]+x[1]*frame[1]) for x in sq]
             outside.append(square);annuli.append((square,ring));squares.append(sq)
             layout=attempts[-1] if sparse is not None else None
@@ -296,7 +405,8 @@ def reconstruct(snapshot,features):
             return added
         # A cap touching several cylinders is a rebuilt detail, not background.
         attached=[cy for cy in CY if set(ids)&set(cy['vertices'])]
-        cap=bool(attached) and not annuli and all(abs(normal@np.array(cy['frame'])[2])>.999 for cy in attached) and len(ids)<200
+        direct_join=any(p['patch']==gid and p.get('layout')=='direct_join' for p in perimeters)
+        cap=bool(attached) and not annuli and not direct_join and all(abs(normal@np.array(cy['frame'])[2])>.999 for cy in attached) and len(ids)<200
         role='DETAIL_REBUILT' if cap else 'BACKGROUND_PLANE'
         new=tess(outside,role,'plane_'+str(gid))
         for ai,(square,ring) in enumerate(annuli):
@@ -333,6 +443,8 @@ def reconstruct(snapshot,features):
                 pt=(np.array(vertices[i])-origin)@frame.T;nn=np.array([*(pt[:2]-c),0.])@frame
                 ns.append(nn/np.linalg.norm(nn)*cy['sign'])
             add(ids,ns,'DETAIL_REBUILT','cylinder_'+str(cy['id']),snapshot['materials'][cy['faces'][0]])
+    for fi in sorted(protected_faces):
+        add(F[fi],corners[off[fi]:off[fi+1]],'LOCKED_FEATURE','retained_feature',snapshot['materials'][fi])
     # Propagate annulus edge subdivisions into every incident wall. Explicit
     # constrained triangles avoid T-junctions and collinear n-gon tessellation.
     original_count=len(outfaces);omit=set()
@@ -359,10 +471,27 @@ def reconstruct(snapshot,features):
         for patch in patches:patch['new_faces']=[i for i,t in enumerate(tags) if t=='plane_'+str(patch['id'])]
         for patch in transitions:patch['new_faces']=[i for i,t in enumerate(tags) if t=='transition_'+str(patch['patch'])]
     used=sorted({i for f in outfaces for i in f});remap={i:k for k,i in enumerate(used)}
-    result=dict(vertices=[vertices[i] for i in used],faces=[[remap[i] for i in f] for f in outfaces],normals=outnormals,roles=roles,tags=tags,materials=materials,patches=patches,perimeters=perimeters,transitions=transitions)
+    result=dict(vertices=[vertices[i] for i in used],faces=[[remap[i] for i in f] for f in outfaces],normals=outnormals,roles=roles,tags=tags,materials=materials,patches=patches,perimeters=perimeters,transitions=transitions,
+                source_to_candidate=[remap.get(i,-1) for i in range(len(V))],
+                candidate_to_source=[i if i<len(V) else -1 for i in used],review_features=review_features)
+    candidate_faces={tuple(face) for face in result['faces']}
+    for fi in protected_faces:
+        mapped=[result['source_to_candidate'][vi] for vi in F[fi]]
+        if (-1 in mapped or tuple(mapped) not in candidate_faces or
+                any(np.linalg.norm(np.array(result['vertices'][mapped[k]])-V[vi])>1e-9 for k,vi in enumerate(F[fi]))):
+            raise ValueError(f'Protected feature geometry changed: source face {fi}')
     for p in perimeters:
         p['ids']=[remap[i] for i in p['ids']];p['hole']=[remap[i] for i in p['hole']]
         p['strips']=[[remap[i] for i in f] for f in p['strips']]
+        if operations['perimeter_loops'] and p.get('layout')=='direct_join':
+            review_features.append(dict(id=p.get('feature_id'),group='CAD_Skipped',source_vertices=[],
+                                        candidate_vertices=p['hole'],
+                                        reason='A support perimeter would not fit; the hole was joined directly'))
     result['topology']=topology(result['faces'])
-    if any(result['topology'][k] for k in ['boundary','nonmanifold','winding','duplicates']):raise ValueError('Candidate topology failed: '+str(result['topology']))
+    if any(result['topology'][k] for k in ['boundary','nonmanifold','winding','duplicates']):
+        incidence=Counter(tuple(sorted((a,b))) for face in outfaces
+                          for a,b in zip(face,face[1:]+face[:1]))
+        open_edges=sorted(edge for edge,count in incidence.items() if count==1)
+        raise ValueError('Candidate topology failed: '+str(result['topology'])+
+                         '; boundary_source_index_edges='+str(open_edges[:32]))
     return result

@@ -12,10 +12,52 @@ from cad_mesh_tool.rebuild import reconstruct
 from cad_mesh_tool.mesh_io import make_mesh,cleanup
 from cad_mesh_tool.validate import validate
 from cad_mesh_tool.straight_walls import cleanup_straight_walls
+from cad_mesh_tool.diagnostics import add_review_groups, vertex_maps
+from cad_mesh_tool.operations import normalize
+from cad_mesh_tool.recovery import decisions, is_geometric_conflict, recover
+from cad_mesh_tool.reporting import explain
 
 
 def write(root,name,data):
     (root/name).write_text(json.dumps(data,indent=2,allow_nan=False),encoding='utf-8')
+
+
+def changed_from_source(source, mesh, origin):
+    if len(source['vertices']) != len(mesh.vertices) or len(source['faces']) != len(mesh.polygons):
+        return True
+    if any(list(poly.vertices) != source['faces'][poly.index] for poly in mesh.polygons):
+        return True
+    return any(np.linalg.norm(np.array(vertex.co) + origin - source['vertices'][vertex.index]) > 1e-6
+               for vertex in mesh.vertices)
+
+
+def map_perimeters(perimeters, remap):
+    mapped=[]
+    for perimeter in perimeters:
+        item=dict(perimeter)
+        for name in ('ids','hole'):
+            item[name]=[remap[i] for i in perimeter[name]]
+            if any(i<0 for i in item[name]):
+                raise ValueError('Straight wall cleanup removed perimeter vertex')
+        item['strips']=[[remap[i] for i in face] for face in perimeter.get('strips',[])]
+        if any(i<0 for face in item['strips'] for i in face):
+            raise ValueError('Straight wall cleanup removed perimeter strip vertex')
+        mapped.append(item)
+    return mapped
+
+
+def validated_candidate(source, features, operations, profile):
+    candidate=reconstruct(source, features, operations)
+    mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
+    try:
+        validation=validate(source,mesh,origin,candidate['roles'],candidate['perimeters'],
+                            profile['epsilon_m'],profile['sample_count'],require_reduction=False)
+        if not all(validation['checks'].values()):
+            raise ValueError('Checkpoint validation failed: '+str(validation['checks']))
+        return candidate,mesh,origin,validation
+    except Exception:
+        bpy.data.meshes.remove(mesh)
+        raise
 
 
 def save_failed_review(root,error,state):
@@ -37,6 +79,8 @@ def save_failed_review(root,error,state):
     obj['cad_geometry_status']='FAIL'
     obj['cad_review_stage']=stage
     obj['cad_review_error']=str(error)
+    candidate=state.get('candidate') if me is state.get('checkpoint_mesh') or state.get('candidate_to_final') is not None else None
+    review_groups=add_review_groups(obj,candidate,state.get('candidate_to_final'))
     blend=root/'review_failed.blend'
     bpy.data.libraries.write(str(blend),{obj},fake_user=True)
     manifest=dict(geometry_status='FAIL',coverage_status='REQUIRES_REVIEW',review_available=True,
@@ -44,6 +88,7 @@ def save_failed_review(root,error,state):
                   result_sha256=hashlib.sha256(blend.read_bytes()).hexdigest(),
                   result_matrix_world=result_matrix_world,
                   result_file=blend.name,tool_version=profile['tool_version'],
+                  review_groups=review_groups,
                   source_hash=profile['source_hash'],code_hash=profile['code_hash'])
     write(root,'manifest.json',manifest)
     print('WORKER_FAILED_REVIEW_AVAILABLE',profile['source_name'],str(error),flush=True)
@@ -61,42 +106,125 @@ def main(root,state=None):
     print('DISCOVER',flush=True)
     discovery=discover(source['vertices'],source['faces'],profile['epsilon_m'])
     write(root,'plan.json',discovery)
+    operations=normalize(profile.get('operations'))
     state['stage']='reconstruct'
-    print('RECONSTRUCT',len(discovery['features']),flush=True)
-    candidate=reconstruct(source,discovery['features']);write(root,'candidate.json',candidate)
-    mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
-    state.update(mesh=mesh,origin=origin,stage='checkpoint_unvalidated')
-    validation=validate(source,mesh,origin,candidate['roles'],candidate['perimeters'],profile['epsilon_m'],profile['sample_count'])
+    print('RECONSTRUCT',len(discovery['features']),operations,flush=True)
+    attempts=0
+    def attempt(features):
+        nonlocal attempts
+        attempts+=1
+        print('RECONSTRUCTION_ATTEMPT',attempts,flush=True)
+        return validated_candidate(source,features,operations,profile)
+    def dispose(result):
+        bpy.data.meshes.remove(result[1])
+    screening_profile=dict(profile,sample_count=min(profile['sample_count'],750))
+    def screen_attempt(features):
+        nonlocal attempts
+        attempts+=1
+        print('RECOVERY_SCREEN',attempts,flush=True)
+        return validated_candidate(source,features,operations,screening_profile)
+    (candidate,mesh,origin,validation),skipped,recovery_attempts=recover(
+        discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt)
+    review_by_id={item['id']:item for item in candidate.get('review_features',[])
+                  if item.get('group')=='CAD_Skipped' and item.get('id') is not None}
+    for item in skipped:
+        region=review_by_id.get(item['feature'],{})
+        item['preserved_faces']=len(region.get('source_faces',[]))
+        item['preserved_vertices']=len(region.get('source_vertices',[]))
+    write(root,'candidate.json',candidate)
     write(root,'validation_checkpoint.json',validation)
-    if not all(validation['checks'].values()):raise ValueError('Checkpoint validation failed: '+str(validation['checks']))
-    state['stage']='checkpoint_validated'
-    final,roles,cleanup_report=cleanup(mesh)
-    state.update(mesh=final,stage='background_cleanup_unvalidated')
-    wall_mesh,wall_report=cleanup_straight_walls(final,profile['straight_walls'])
-    bpy.data.meshes.remove(final);final=wall_mesh
-    state.update(mesh=final,stage='straight_walls_unvalidated')
+    state.update(candidate=candidate,mesh=mesh,checkpoint_mesh=mesh,origin=origin,stage='checkpoint_validated')
     from cad_mesh_tool.mesh_io import ROLES
-    roles=[ROLES[x.value] for x in final.attributes['cad_role'].data]
-    remap=wall_report['vertex_map']
-    final_perimeters=[dict(p,ids=[remap[i] for i in p['ids']],hole=[remap[i] for i in p['hole']],
-                           strips=[[remap[i] for i in f] for f in p.get('strips',[])]) for p in candidate['perimeters']]
-    if any(i<0 for p in final_perimeters for i in p['ids']+p['hole']):raise ValueError('Straight wall cleanup removed perimeter vertex')
+    final=mesh.copy()
+    remap=list(range(len(mesh.vertices)))
+    final_perimeters=map_perimeters(candidate['perimeters'],remap)
+    validation_final=validation
+    cleanup_report=dict(dissolved_edges=0,protected_faces=0,protected_faces_lost=0,locally_triangulated_ngons=0)
+    wall_report=dict(merged_patches=[],removed_faces=0,vertex_map=remap)
+    stage_fallbacks=[]
+    if operations['perimeter_loops']:
+        for perimeter in candidate['perimeters']:
+            if perimeter.get('layout')=='direct_join':
+                stage_fallbacks.append(dict(stage='Perimeter Loops',
+                    reason='A support perimeter would not fit; the hole was joined directly',
+                    message='This opening was connected safely without the requested support loop.'))
+
+    def validate_stage(proposed, proposed_remap, name):
+        from cad_mesh_tool.mesh_io import ROLES
+        proposed_roles=[ROLES[x.value] for x in proposed.attributes['cad_role'].data]
+        proposed_perimeters=map_perimeters(candidate['perimeters'],proposed_remap)
+        checked=validate(source,proposed,origin,proposed_roles,proposed_perimeters,
+                         profile['epsilon_m'],profile['sample_count'],require_reduction=False)
+        if not all(checked['checks'].values()):
+            raise ValueError(f'{name} validation failed: {checked["checks"]}')
+        return checked,proposed_perimeters
+
+    if operations['background_cleanup']:
+        state['stage']='background_cleanup_unvalidated'
+        proposed=None
+        try:
+            proposed,_,report=cleanup(final)
+            checked,perimeters=validate_stage(proposed,remap,'Background cleanup')
+        except ValueError as error:
+            if not is_geometric_conflict(error) and not str(error).startswith((
+                    'Background cleanup validation failed','Protected faces lost','Cleanup changed vertices',
+                    'Invalid triangulation in protected detail','Local n-gon repair changed topology')):
+                raise
+            if proposed is not None:bpy.data.meshes.remove(proposed)
+            stage_fallbacks.append(dict(stage='Background Cleanup',reason=str(error),message=explain(str(error))))
+        else:
+            bpy.data.meshes.remove(final);final=proposed
+            validation_final=checked;final_perimeters=perimeters;cleanup_report=report
+            write(root,'validation_background.json',checked)
+    if operations['straight_walls']:
+        state['stage']='straight_walls_unvalidated'
+        proposed=None
+        try:
+            proposed,report=cleanup_straight_walls(final,profile['straight_walls'])
+            next_remap=[report['vertex_map'][i] if i>=0 else -1 for i in remap]
+            checked,perimeters=validate_stage(proposed,next_remap,'Straight wall cleanup')
+        except ValueError as error:
+            if not is_geometric_conflict(error) and not str(error).startswith((
+                    'Straight wall cleanup','Straight wall','Straight wall cleanup validation failed')):
+                raise
+            if proposed is not None:bpy.data.meshes.remove(proposed)
+            stage_fallbacks.append(dict(stage='Merge Straight Walls',reason=str(error),message=explain(str(error))))
+        else:
+            bpy.data.meshes.remove(final);final=proposed;remap=next_remap
+            validation_final=checked;final_perimeters=perimeters;wall_report=report
+            write(root,'validation_straight_walls.json',checked)
+    if not changed_from_source(source,final,origin):
+        raise ValueError('No selected operation produced a validated geometry change')
+    if (operations['circular_holes'] or operations['arcs'] or operations['outer_cylinders'] or
+            operations['background_cleanup'] or operations['straight_walls']) and not validation_final['triangle_reduction_observed']:
+        stage_fallbacks.append(dict(stage='Reduction Objective',
+            reason='The selected operations did not reduce the total triangulated face count',
+            message='The geometry is valid, but the overall triangle count did not decrease.'))
+    state.update(mesh=final,candidate_to_final=remap,stage='final_validated')
     write(root,'straight_walls.json',wall_report)
     write(root,'perimeters_final.json',final_perimeters)
-    validation_final=validate(source,final,origin,roles,final_perimeters,profile['epsilon_m'],profile['sample_count'])
-    write(root,'validation_final.json',validation_final);write(root,'cleanup.json',cleanup_report)
-    if not all(validation_final['checks'].values()):raise ValueError('Editable validation failed: '+str(validation_final['checks']))
-    state['stage']='final_validated'
+    write(root,'validation_final.json',validation_final)
+    write(root,'cleanup.json',cleanup_report)
+    write(root,'vertex_map.json',vertex_maps(candidate,remap))
     scale=profile['unit_scale'];objects=[]
     result_matrix_world=Matrix.Translation(origin/scale)@Matrix.Scale(1/scale,4)
+    review_groups=[]
     for me,name,checkpoint in [(mesh,'CAD_Checkpoint',True),(final,'CAD_Optimized',False)]:
         obj=bpy.data.objects.new(name,me);obj.matrix_world=result_matrix_world
+        if not checkpoint:
+            review_groups=add_review_groups(obj,candidate,remap)
         obj['cad_checkpoint']=checkpoint;objects.append(obj)
     bpy.data.libraries.write(str(root/'result.blend'),set(objects),fake_user=True)
-    manifest=dict(geometry_status='PASS',coverage_status='REQUIRES_REVIEW',objects=[o.name for o in objects],
+    partial=bool(skipped or stage_fallbacks)
+    skipped_ids={item['feature'] for item in skipped}
+    rebuilt_count=sum(decisions([feature],operations)[0]['decision']=='REBUILD'
+                      and feature['id'] not in skipped_ids for feature in discovery['features'])
+    manifest=dict(geometry_status='PASS',coverage_status='REQUIRES_REVIEW',partial=partial,
+                  operations=operations,skipped_features=skipped,stage_fallbacks=stage_fallbacks,
+                  recovery_attempts=recovery_attempts,objects=[o.name for o in objects],
                   result_sha256=hashlib.sha256((root/'result.blend').read_bytes()).hexdigest(),
                   before=validation['before'],checkpoint=validation['after'],final=validation_final['after'],
-                  tool_version=profile['tool_version'],cylinders_rebuilt=len(discovery['features']),perimeters=len(candidate['perimeters']),
+                  tool_version=profile['tool_version'],cylinders_rebuilt=rebuilt_count,perimeters=len(candidate['perimeters']),
                   feature_categories=dict(Counter(c['category'] for c in discovery['features'])),
                   source_faces_not_claimed_by_cylinders=len(discovery['unclaimed_faces']),
                   transition_patches=len(candidate.get('transitions',[])),
@@ -104,24 +232,38 @@ def main(root,state=None):
                   protected_faces_lost=cleanup_report['protected_faces_lost'],elapsed_seconds=time.time()-start,
                   straight_wall_patches=len(wall_report['merged_patches']),straight_wall_faces_removed=wall_report['removed_faces'],
                   sparse_perimeters=sum(p.get('layout')=='straight_strips' for p in candidate['perimeters']),
+                  direct_join_perimeters=sum(p.get('layout')=='direct_join' for p in candidate['perimeters']),
                   compound_perimeters_dense=[i for i,p in enumerate(candidate['perimeters']) if p.get('kind')=='compound' and p.get('layout')!='straight_strips'],
+                  review_groups=review_groups,
                   source_hash=profile['source_hash'],code_hash=profile['code_hash'])
     manifest['result_matrix_world']=[list(row) for row in result_matrix_world]
     manifest['normal_limit_override_deg']=profile['straight_walls'].get('normal_limit_deg')
+    manifest['summary']=(f"Validated partial result: {len(skipped)} feature(s) preserved, "
+                         f"{len(stage_fallbacks)} step warning(s). "
+                         +('Inspect CAD_Skipped and REPORT.md.' if skipped else 'Inspect REPORT.md.')
+                         if partial else 'Selected CAD operations completed; inspect the output visually.')
     if manifest['normal_limit_override_deg'] is not None:
         manifest['normal_limit_warning']='Manual normal limit may accept visible shading changes' if manifest['normal_limit_override_deg']>0.05 else ''
     write(root,'manifest.json',manifest)
-    (root/'REPORT.md').write_text(
-        '# CAD mesh tool result\n\nGeometry: PASS. Coverage: REQUIRES_REVIEW.\n\n'
-        f"Triangles: {manifest['before']['t']} → {manifest['checkpoint']['t']} → {manifest['final']['t']}.\n\n"
-        f"Rebuilt cylinders: {manifest['cylinders_rebuilt']}; perimeters: {manifest['perimeters']}; protected faces lost: {manifest['protected_faces_lost']}.\n\n"
-        f"Local background n-gon repairs: {manifest['locally_triangulated_ngons']}. Transition patches: {manifest['transition_patches']}.\n\n"
-        f"Straight wall patches merged: {manifest['straight_wall_patches']}; wall faces removed: {manifest['straight_wall_faces_removed']}. See straight_walls.json for parameters and skipped cases.\n\n"
-        f"Sparse compound perimeters: {manifest['sparse_perimeters']}; compound perimeters retaining dense layout: {manifest['compound_perimeters_dense']}. See candidate.json.\n\n"
-        f"Manual normal limit (degrees): {manifest['normal_limit_override_deg']}; {manifest.get('normal_limit_warning','')}\n\n"
-        f"Source faces not owned by detected cylinders: {manifest['source_faces_not_claimed_by_cylinders']}. This includes flat background, caps and other surfaces; it is not a count of missed holes or failed faces.\n\n"
-        'The tool checks supported analytic reconstructions. Independent visual/coverage review remains required. plan.json inventories source face ownership; candidate.json records rebuilt planes, transitions and protected faces. This is not a certified arbitrary-CAD optimizer.\n',encoding='utf-8')
-    print('WORKER_COMPLETE',json.dumps(manifest),flush=True)
+    lines=['# CAD mesh reconstruction', '',
+           'Result: PARTIAL / REVIEW.' if partial else 'Result: PASS.',
+           'The output passed geometry validation. Visual review is still required.', '',
+           f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
+           f"Triangles: {manifest['before']['t']} -> {manifest['final']['t']}.",
+           f"Validated reconstruction attempts: {recovery_attempts}.", '']
+    for item in skipped:
+        lines.append(f"- Feature {item['feature']} was preserved ({item['preserved_faces']} source faces, "
+                     f"{item['preserved_vertices']} vertices): {explain(item['reason'])} "
+                     'Review its CAD_Skipped vertex group.')
+    for item in stage_fallbacks:
+        lines.append(f"- {item['stage']} was not applied: {item['message']} The last validated mesh was kept.")
+    if not partial:
+        lines.append('All selected operations completed without a local recovery fallback.')
+    lines.extend(['', 'Details: candidate.json, validation_checkpoint.json, validation_final.json, '
+                  'vertex_map.json and worker.log contain exact technical evidence.'])
+    (root/'REPORT.md').write_text('\n'.join(lines)+'\n',encoding='utf-8')
+    print('WORKER_COMPLETE',manifest['summary'],
+          f"triangles={manifest['before']['t']}->{manifest['final']['t']}",flush=True)
 
 
 if __name__=='__main__':
@@ -130,8 +272,9 @@ if __name__=='__main__':
     try:main(run,review_state)
     except Exception as error:
         detail=dict(status='FAIL',error=str(error),stage=review_state.get('stage','startup'),
-                    traceback=traceback.format_exc())
-        try:detail['review_available']=save_failed_review(run,error,review_state)
-        except Exception as review_error:detail['review_available']=False;detail['review_artifact_error']=str(review_error)
+                    message=explain(str(error)),traceback=traceback.format_exc(),
+                    review_available=False,diagnostic_output_created=False)
         write(run,'failure.json',detail)
+        (run/'REPORT.md').write_text('# CAD mesh reconstruction\n\nResult: FAIL. No validated output was created.\n\n'
+                                     +detail['message']+'\n\nTechnical details are in failure.json and worker.log.\n',encoding='utf-8')
         raise

@@ -11,7 +11,8 @@ from pathlib import Path
 import bpy
 
 from ..cad_mesh_tool.api import apply_result, prepare_selected
-from ..cad_mesh_tool.mesh_io import fingerprint
+from ..cad_mesh_tool.mesh_io import fingerprint, topology_problem
+from ..cad_mesh_tool.operations import DEFAULTS, normalize
 
 
 ACTIVE_JOB = None
@@ -29,7 +30,7 @@ def sources(context, state, retry_source=None):
         objects = list(state.input_collection.all_objects)
     else:
         objects = list(context.selected_objects)
-    found = {obj.as_pointer(): obj for obj in objects if obj.type == "MESH" and not obj.get("lcw_cad_run_id")}
+    found = {obj.as_pointer(): obj for obj in objects if obj.type == "MESH"}
     if not found:
         raise ValueError("No eligible source mesh objects")
     return sorted(found.values(), key=lambda obj: (obj.name_full.casefold(), obj.as_pointer()))
@@ -37,6 +38,10 @@ def sources(context, state, retry_source=None):
 
 def preflight(context, state, objects):
     problems = []
+    try:
+        normalize({name: bool(getattr(state, name)) for name in DEFAULTS})
+    except ValueError as exc:
+        problems.append(str(exc))
     scale = context.scene.unit_settings.scale_length
     if not math.isfinite(scale) or scale <= 0:
         problems.append("Scene unit scale must be positive and finite")
@@ -45,6 +50,8 @@ def preflight(context, state, objects):
             problems.append(f"{obj.name}: unapplied modifiers")
         if not obj.data.vertices or not obj.data.polygons:
             problems.append(f"{obj.name}: empty mesh")
+        elif topology_issue := topology_problem(obj):
+            problems.append(topology_issue)
         if obj.library or obj.data.library:
             problems.append(f"{obj.name}: linked source is read-only")
         if abs(obj.matrix_world.determinant()) < 1e-12:
@@ -125,6 +132,8 @@ def _result_record(state, source, run_dir, status, reason="", stage="", output=N
     row.status = status
     row.geometry_status = (manifest or {}).get("geometry_status", "FAIL" if status != "PASS" else "PASS")
     row.coverage_status = (manifest or {}).get("coverage_status", "REQUIRES_REVIEW")
+    row.partial = bool((manifest or {}).get("partial", False))
+    row.summary = (manifest or {}).get("summary", "")[:1024]
     row.reason = reason[:1024]
     row.stage = stage[:256]
     row.run_dir = str(run_dir)
@@ -183,6 +192,27 @@ class CADBatch:
         self.current_dir = None
         self.source_hash = ""
         self.cancelled = False
+        self.log_position = 0
+        self.worker_phase = "Starting"
+
+    def _read_worker_progress(self):
+        path = self.current_dir / "worker.log"
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as stream:
+                stream.seek(self.log_position)
+                lines = stream.readlines()
+                self.log_position = stream.tell()
+        except OSError:
+            return
+        for line in lines:
+            if line.startswith("DISCOVER"):
+                self.worker_phase = "Detecting features"
+            elif line.startswith("RECOVERY_SCREEN"):
+                self.worker_phase = f"Testing safe regions ({line.split()[-1].strip()})"
+            elif line.startswith("RECONSTRUCTION_ATTEMPT"):
+                self.worker_phase = f"Validating attempt ({line.split()[-1].strip()})"
+            elif line.startswith("VALIDATE"):
+                self.worker_phase = "Checking geometry"
 
     def cancel(self):
         self.cancelled = True
@@ -208,11 +238,14 @@ class CADBatch:
                 return False
             source = self.objects[self.index]
             self.current_dir = self.root / uuid.uuid4().hex
+            self.log_position = 0
+            self.worker_phase = "Starting"
             state.progress = f"Preparing {self.index + 1}/{len(self.objects)}: {source.name}"
             try:
                 self.source_hash = fingerprint(source)
                 options = {"enabled": state.straight_walls, "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
-                prepare_selected(str(self.current_dir), epsilon_mm=state.epsilon_mm, obj=source, straight_walls=options)
+                selected = {name: bool(getattr(state, name)) for name in DEFAULTS}
+                prepare_selected(str(self.current_dir), epsilon_mm=state.epsilon_mm, obj=source, straight_walls=options, operations=selected)
                 worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
                 command = [bpy.app.binary_path, "--background", "--factory-startup", "--python-exit-code", "1", "--python", str(worker), "--", str(self.current_dir)]
                 self.log = (self.current_dir / "worker.log").open("w", encoding="utf-8")
@@ -228,7 +261,8 @@ class CADBatch:
                 self.index += 1
             return True
         if self.process.poll() is None:
-            state.progress = f"Processing {self.index + 1}/{len(self.objects)}: {self.objects[self.index].name}"
+            self._read_worker_progress()
+            state.progress = f"{self.index + 1}/{len(self.objects)} {self.objects[self.index].name}: {self.worker_phase}"
             return True
         exit_code = self.process.returncode
         self.process = None
@@ -244,8 +278,8 @@ class CADBatch:
         except (OSError, ValueError) as exc:
             manifest = {}
             failure = {"error": f"Unreadable worker report: {exc}"}
-        status = "PASS" if exit_code == 0 and manifest.get("geometry_status") == "PASS" else "REVIEW" if manifest.get("review_available") is True else "FAIL"
-        reason = manifest.get("review_reason") or failure.get("error", f"Worker exit code {exit_code}" if exit_code else "")
+        status = "REVIEW" if exit_code == 0 and manifest.get("geometry_status") == "PASS" and manifest.get("partial") else "PASS" if exit_code == 0 and manifest.get("geometry_status") == "PASS" else "FAIL"
+        reason = manifest.get("summary") or failure.get("message") or failure.get("error", f"Worker exit code {exit_code}" if exit_code else "")
         stage = manifest.get("review_stage") or failure.get("stage", "worker")
         output = None
         try:

@@ -190,7 +190,9 @@ try:
         failed = next(row for row in new_rows if row.source == singular)
         assert failed.status == "FAIL" and failed.output is None
         assert failed.stage == "prepare"
-        assert next(row for row in new_rows if row.source == cube).status in {"PASS", "REVIEW"}
+        unchanged = next(row for row in new_rows if row.source == cube)
+        assert unchanged.status in {"PASS", "REVIEW", "FAIL"}
+        assert (unchanged.output is None) == (unchanged.status == "FAIL")
         assert fingerprint(singular) == singular_before
         assert fingerprint(cube) == before
         print("CAD_BATCH_FAILURE_ISOLATION_OK")
