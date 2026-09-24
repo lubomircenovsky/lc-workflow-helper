@@ -160,7 +160,7 @@ def rim_aliases(ids, row, theta, full):
     return aliases
 
 
-def reconstruct(snapshot,features,operations=None,protection=None):
+def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve_segmentation=False):
     from .operations import normalize
     operations=normalize(operations)
     V=np.array(snapshot['vertices'],dtype=float);F=snapshot['faces'];vertices=V.tolist()
@@ -266,12 +266,25 @@ def reconstruct(snapshot,features,operations=None,protection=None):
         touched=any((changed|perimeter_vertices).intersection(F[fi]) for fi in fs)
         if not touched:
             # Regions untouched by reconstruction are not automatically eligible for dissolve.
-            role='BACKGROUND_PLANE' if operations['background_cleanup'] and not CY and not perimeter_only else 'PROTECTED_OTHER'
+            old_roles=snapshot.get('cad_roles') or []
+            protected_roles={'PERIMETER_RING','PERIMETER_STRAIGHT','DETAIL_REBUILT','LOCKED_FEATURE'}
+            safe_background=(preserve_curve_segmentation and operations['background_cleanup'] and
+                             len({snapshot['materials'][fi] for fi in fs})==1 and
+                             not any(fi<len(old_roles) and old_roles[fi] in protected_roles for fi in fs))
+            if preserve_curve_segmentation:
+                role='BACKGROUND_PLANE' if safe_background else 'PROTECTED_OTHER'
+            else:
+                role=('BACKGROUND_PLANE' if operations['background_cleanup'] and
+                      not CY and not perimeter_only else 'PROTECTED_OTHER')
             for fi in fs:
-                source_role=(snapshot.get('cad_roles') or [])[fi] if snapshot.get('cad_roles') else role
+                source_role=old_roles[fi] if old_roles and not preserve_curve_segmentation else role
                 add(F[fi],corners[off[fi]:off[fi+1]],source_role,'retained',snapshot['materials'][fi])
             continue
         normal=normals[fs[0]];origin=V[F[fs[0]][0]];frame=basis(normal)
+        if len({snapshot['materials'][fi] for fi in fs})!=1:
+            raise ValueError('Material boundary in planar patch')
+        if any(np.min(corners[off[fi]:off[fi+1]]@normal)<math.cos(math.radians(.1)) for fi in fs):
+            raise ValueError('Shading boundary in planar patch')
         ids=sorted({i for fi in fs for i in F[fi]})
         attached=[cy for cy in CY if set(ids)&set(cy['vertices'])]
         boundary_loops=loops([F[i] for i in fs])

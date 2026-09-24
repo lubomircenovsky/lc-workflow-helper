@@ -29,6 +29,15 @@ class OperationTests(unittest.TestCase):
         self.assertEqual(decision('circular_hole', options), 'PERIMETER_ONLY')
         self.assertEqual(decisions(FEATURES, options)[2]['decision'], 'DISABLED')
 
+    def test_preserve_curve_segmentation_keeps_only_perimeter_decision(self):
+        options = dict(DEFAULTS)
+        self.assertEqual(decision('circular_hole', options), 'REBUILD')
+        self.assertEqual(decision('circular_hole', options, True), 'PERIMETER_ONLY')
+        self.assertEqual(decision('concave_arc', options, True), 'DISABLED')
+        self.assertEqual(decision('outer_cylinder', options, True), 'DISABLED')
+        options['perimeter_loops'] = False
+        self.assertEqual(decision('circular_hole', options, True), 'DISABLED')
+
     def test_skip_only_conflicting_feature(self):
         calls = []
 

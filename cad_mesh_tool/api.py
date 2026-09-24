@@ -13,7 +13,7 @@ def code_hash():
 
 
 def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operations=None,
-                     preserve_nonmanifold=False):
+                     preserve_nonmanifold=False,preserve_curve_segmentation=False):
     obj=obj or bpy.context.active_object
     if obj is None:raise ValueError('Select a source mesh')
     root=Path(run_dir)
@@ -28,7 +28,8 @@ def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operatio
                  method='A',delivery='EDITABLE_NGONS',source_name=obj.name,source_hash=snapshot['source_hash'],
                  unit_scale=snapshot['unit_scale'],sample_count=20000,coverage_status='REQUIRES_REVIEW',straight_walls=wall_settings,
                  compound_perimeter_policy='straight_strips_v1',operations=selected_operations,
-                 preserve_nonmanifold=bool(preserve_nonmanifold))
+                 preserve_nonmanifold=bool(preserve_nonmanifold),
+                 preserve_curve_segmentation=bool(preserve_curve_segmentation))
     (root/'source.json').write_text(json.dumps(snapshot),encoding='utf-8')
     (root/'profile.json').write_text(json.dumps(profile,indent=2),encoding='utf-8')
     print('Prepared immutable source:',root)

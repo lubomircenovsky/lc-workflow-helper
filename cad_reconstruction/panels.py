@@ -49,6 +49,9 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             controls.enabled = not running
             controls.prop(state, "epsilon_mm")
             controls.prop(state, "circular_holes")
+            controls.prop(state, "preserve_curve_segmentation")
+            if state.preserve_curve_segmentation:
+                controls.label(text="Curve reduction paused; perimeter and cleanup remain available.", icon="INFO")
             controls.prop(state, "perimeter_loops")
             controls.prop(state, "arcs")
             controls.prop(state, "outer_cylinders")
@@ -118,6 +121,10 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                 result_box.label(text=f"Stage: {item.stage}")
                 for start in range(0, min(len(item.reason), 240), 80):
                     result_box.label(text=item.reason[start:start + 80])
+            if item.perimeter_summary:
+                result_box.label(text=item.perimeter_summary[:100])
+            if item.planar_summary:
+                result_box.label(text=item.planar_summary[:100])
             row = result_box.row(align=True)
             row.enabled = item.status not in {"PENDING", "RUNNING"}
             row.operator("lcw.cad_select_source", text="Source").result_index = index

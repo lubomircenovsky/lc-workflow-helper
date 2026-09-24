@@ -56,6 +56,7 @@ def make_mesh(candidate,name):
 def cleanup(mesh):
     """Return a NEW mesh; retain validated checkpoint and its protected topology."""
     result=mesh.copy();result.name=mesh.name+'_Editable'
+    before_edges={tuple(sorted(edge.vertices)) for edge in mesh.edges}
     bm=bmesh.new();bm.from_mesh(result);bm.faces.ensure_lookup_table();bm.verts.ensure_lookup_table()
     role=bm.faces.layers.int.get('cad_role')
     if role is None:bm.free();bpy.data.meshes.remove(result);raise ValueError('Missing explicit role map')
@@ -119,4 +120,5 @@ def cleanup(mesh):
     if len(mesh.vertices)!=len(result.vertices) or any((a.co-b.co).length>0 for a,b in zip(mesh.vertices,result.vertices)):
         bpy.data.meshes.remove(result);raise ValueError('Cleanup changed vertices')
     roles=[ROLES[x.value] for x in result.attributes['cad_role'].data]
-    return result,roles,dict(dissolved_edges=len(eligible),protected_faces=len(protected),protected_faces_lost=len(missing),locally_triangulated_ngons=len(bad_polys))
+    after_edges={tuple(sorted(edge.vertices)) for edge in result.edges}
+    return result,roles,dict(dissolved_edges=len(before_edges-after_edges),protected_faces=len(protected),protected_faces_lost=len(missing),locally_triangulated_ngons=len(bad_polys))

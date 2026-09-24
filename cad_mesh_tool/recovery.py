@@ -15,6 +15,8 @@ RECOVERABLE_PREFIXES = (
     "Branching cylinder", "Expected two cylinder", "Cylinder end contour",
     "Degenerate face",
     "Protected non-manifold region changed",
+    "Material boundary in planar patch", "Shading boundary in planar patch",
+    "Region boundary branches or is open", "Non-simple boundary",
 )
 
 
@@ -22,13 +24,14 @@ def is_geometric_conflict(error):
     return isinstance(error, ValueError) and str(error).startswith(RECOVERABLE_PREFIXES)
 
 
-def decisions(features, operations, accepted=None, reasons=None):
+def decisions(features, operations, accepted=None, reasons=None,
+              preserve_curve_segmentation=False):
     accepted = set(accepted) if accepted is not None else None
     reasons = reasons or {}
     result = []
     for feature in features:
         item = dict(feature)
-        choice = decision(item['category'], operations)
+        choice = decision(item['category'], operations, preserve_curve_segmentation)
         if choice != 'DISABLED' and item.get('forced_skip_reason'):
             choice = 'SKIP'
         if accepted is not None and choice != 'DISABLED' and item['id'] not in accepted:
@@ -41,7 +44,8 @@ def decisions(features, operations, accepted=None, reasons=None):
     return result
 
 
-def recover(features, operations, attempt, dispose, max_attempts=64, screen_attempt=None):
+def recover(features, operations, attempt, dispose, max_attempts=64, screen_attempt=None,
+            preserve_curve_segmentation=False):
     """Return a validated candidate and exact skip reasons, or propagate failure.
 
     The callback must validate and release failed temporary data. A full pass is
@@ -52,13 +56,14 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
     if max_attempts < 2:
         raise ValueError('Recovery attempt limit must allow a final validation')
     fixed = [f for f in features if f.get('forced_skip_reason')
-             and decision(f['category'], operations) != 'DISABLED']
-    active = [f['id'] for f in features if decision(f['category'], operations) != 'DISABLED'
+             and decision(f['category'], operations, preserve_curve_segmentation) != 'DISABLED']
+    active = [f['id'] for f in features if decision(f['category'], operations, preserve_curve_segmentation) != 'DISABLED'
               and not f.get('forced_skip_reason')]
     tries = 0
     try:
         tries += 1
-        result = attempt(decisions(features, operations))
+        result = attempt(decisions(features, operations,
+                                   preserve_curve_segmentation=preserve_curve_segmentation))
         return result, [dict(feature=f['id'],reason=f['forced_skip_reason'],group='CAD_Skipped')
                         for f in fixed], tries
     except Exception as error:
@@ -76,7 +81,8 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
         trial = accepted | {feature_id}
         try:
             tries += 1
-            result = screen_attempt(decisions(features, operations, trial, reasons))
+            result = screen_attempt(decisions(features, operations, trial, reasons,
+                                              preserve_curve_segmentation))
         except Exception as error:
             if not is_geometric_conflict(error):
                 raise
@@ -92,7 +98,8 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
     while True:
         tries += 1
         try:
-            result = attempt(decisions(features, operations, accepted, reasons))
+            result = attempt(decisions(features, operations, accepted, reasons,
+                                       preserve_curve_segmentation))
         except Exception as error:
             if not is_geometric_conflict(error) or not accepted or tries >= max_attempts:
                 raise

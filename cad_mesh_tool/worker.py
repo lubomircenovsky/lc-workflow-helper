@@ -50,7 +50,8 @@ def map_perimeters(perimeters, remap):
 def validated_candidate(source, features, operations, profile, protection=None, timings=None):
     if timings is None:timings={}
     phase=time.perf_counter()
-    candidate=reconstruct(source, features, operations, protection=protection)
+    candidate=reconstruct(source, features, operations, protection=protection,
+                          preserve_curve_segmentation=profile.get('preserve_curve_segmentation',False))
     timings['reconstruct_seconds']=time.perf_counter()-phase
     phase=time.perf_counter()
     mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
@@ -121,6 +122,7 @@ def main(root,state=None):
                 feature['forced_skip_reason']='Touches an unchanged source non-manifold junction'
     write(root,'plan.json',discovery)
     operations=normalize(profile.get('operations'))
+    preserve_curve_segmentation=bool(profile.get('preserve_curve_segmentation',False))
     state['stage']='reconstruct'
     print('RECONSTRUCT',len(discovery['features']),operations,flush=True)
     attempts=0
@@ -151,7 +153,8 @@ def main(root,state=None):
             timing['total_seconds']=time.perf_counter()-started
             attempt_timings.append(timing)
     (candidate,mesh,origin,validation),skipped,recovery_attempts=recover(
-        discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt)
+        discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt,
+        preserve_curve_segmentation=preserve_curve_segmentation)
     review_by_id={item['id']:item for item in candidate.get('review_features',[])
                   if item.get('group')=='CAD_Skipped' and item.get('id') is not None}
     for item in skipped:
@@ -229,11 +232,6 @@ def main(root,state=None):
         wall_report['elapsed_seconds']=time.perf_counter()-walls_started
     if not changed_from_source(source,final,origin):
         raise ValueError('No selected operation produced a validated geometry change')
-    if (operations['circular_holes'] or operations['arcs'] or operations['outer_cylinders'] or
-            operations['background_cleanup'] or operations['straight_walls']) and not validation_final['triangle_reduction_observed']:
-        stage_fallbacks.append(dict(stage='Reduction Objective',
-            reason='The selected operations did not reduce the total triangulated face count',
-            message='The geometry is valid, but the overall triangle count did not decrease.'))
     state.update(mesh=final,candidate_to_final=remap,stage='final_validated')
     write(root,'straight_walls.json',wall_report)
     write(root,'perimeters_final.json',final_perimeters)
@@ -251,11 +249,38 @@ def main(root,state=None):
     bpy.data.libraries.write(str(root/'result.blend'),set(objects),fake_user=True)
     partial=bool(protection or skipped or stage_fallbacks)
     skipped_ids={item['feature'] for item in skipped}
-    rebuilt_count=sum(decisions([feature],operations)[0]['decision']=='REBUILD'
+    rebuilt_count=sum(decisions([feature],operations,
+                                preserve_curve_segmentation=preserve_curve_segmentation)[0]['decision']=='REBUILD'
                       and feature['id'] not in skipped_ids for feature in discovery['features'])
+    accepted_reductions=[feature for feature in discovery['features']
+                         if feature['id'] not in skipped_ids and
+                         decisions([feature],operations,
+                                   preserve_curve_segmentation=preserve_curve_segmentation)[0]['decision']=='REBUILD'
+                         and feature['segments']<feature['segments_before']]
+    circular_skips=[item for item in skipped if next(
+        (feature['category'] for feature in discovery['features'] if feature['id']==item['feature']),None)=='circular_hole']
+    created_loops=sum(p.get('kind')=='circular' and p.get('layout')!='direct_join'
+                      for p in candidate['perimeters'])
+    direct_joins=sum(p.get('kind')=='circular' and p.get('layout')=='direct_join'
+                     for p in candidate['perimeters'])
+    operation_results=dict(
+        circular_holes_detected=sum(feature['category']=='circular_hole' for feature in discovery['features']),
+        perimeter_loops_created=created_loops,
+        perimeter_direct_joins=direct_joins,
+        perimeter_skipped=len(circular_skips) if operations['perimeter_loops'] else 0,
+        perimeter_not_attempted=(sum('Recovery attempt limit' in item['reason'] for item in circular_skips)
+                                 if operations['perimeter_loops'] else 0),
+        segments_reduced=sum(feature['segments_before']-feature['segments'] for feature in accepted_reductions),
+        curves_reduced=len(accepted_reductions),
+        planar_edges_removed=cleanup_report['dissolved_edges'],
+        ngons_before=sum(len(face)>4 for face in source['faces']),
+        ngons_after=sum(len(face.vertices)>4 for face in final.polygons),
+        locally_triangulated_ngons=cleanup_report.get('locally_triangulated_ngons',0))
     manifest=dict(geometry_status='PASS',coverage_status='REQUIRES_REVIEW',partial=partial,
                   preserved_source_nonmanifold=protection,
                   operations=operations,skipped_features=skipped,stage_fallbacks=stage_fallbacks,
+                  preserve_curve_segmentation=preserve_curve_segmentation,
+                  operation_results=operation_results,
                   recovery_attempts=recovery_attempts,objects=[o.name for o in objects],
                   result_sha256=hashlib.sha256((root/'result.blend').read_bytes()).hexdigest(),
                   before=validation['before'],checkpoint=validation['after'],final=validation_final['after'],
@@ -290,6 +315,14 @@ def main(root,state=None):
            'Result: PARTIAL / REVIEW.' if partial else 'Result: PASS.',
            'The output passed geometry validation. Visual review is still required.', '',
            f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
+           f"Preserve curve segmentation: {preserve_curve_segmentation}.",
+           f"Circular holes detected: {operation_results['circular_holes_detected']}.",
+           f"Perimeter loops: {created_loops} created, {direct_joins} direct joins without a loop, "
+           f"{operation_results['perimeter_skipped']} skipped ({operation_results['perimeter_not_attempted']} not attempted).",
+           f"Curve reduction: {operation_results['curves_reduced']} features, "
+           f"{operation_results['segments_reduced']} segments removed.",
+           f"Planar cleanup: {operation_results['planar_edges_removed']} internal edges removed; "
+           f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}.",
            f"Triangles: {manifest['before']['t']} -> {manifest['final']['t']}.",
            f"Validated reconstruction attempts: {recovery_attempts}.", '']
     if protection is not None:

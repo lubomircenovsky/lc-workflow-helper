@@ -1,4 +1,4 @@
-"""Optional CAD benchmark: BLEND --python SCRIPT -- RUN_DIR WORKERS [priority]."""
+"""Optional CAD benchmark: BLEND --python SCRIPT -- RUN_DIR WORKERS [priority] [preserve]."""
 
 import ctypes
 import json
@@ -55,6 +55,7 @@ try:
     state.concurrent_workers = workers
     state.epsilon_mm = .4
     state.normal_override = False
+    state.preserve_curve_segmentation = len(args) > 3 and args[3] == "preserve"
     for name in ("circular_holes", "perimeter_loops", "arcs", "outer_cylinders",
                  "background_cleanup", "straight_walls"):
         setattr(state, name, True)
@@ -80,6 +81,7 @@ try:
     unchanged = all(fingerprint(obj) == original[obj.name] for obj in objects)
     result = {
         "workers": workers,
+        "preserve_curve_segmentation": state.preserve_curve_segmentation,
         "total_seconds": time.perf_counter() - start,
         "max_running": max_running,
         "peak_worker_working_set_mb": peak_workers_mb,

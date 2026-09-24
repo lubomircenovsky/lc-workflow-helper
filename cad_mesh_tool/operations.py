@@ -25,13 +25,15 @@ def normalize(options=None):
     return result
 
 
-def decision(category, operations):
+def decision(category, operations, preserve_curve_segmentation=False):
     if category == "circular_hole":
+        if preserve_curve_segmentation:
+            return "PERIMETER_ONLY" if operations["perimeter_loops"] else "DISABLED"
         if operations["circular_holes"]:
             return "REBUILD"
         return "PERIMETER_ONLY" if operations["perimeter_loops"] else "DISABLED"
     if category in {"concave_arc", "convex_arc"}:
-        return "REBUILD" if operations["arcs"] else "DISABLED"
+        return "REBUILD" if operations["arcs"] and not preserve_curve_segmentation else "DISABLED"
     if category == "outer_cylinder":
-        return "REBUILD" if operations["outer_cylinders"] else "DISABLED"
+        return "REBUILD" if operations["outer_cylinders"] and not preserve_curve_segmentation else "DISABLED"
     return "DISABLED"

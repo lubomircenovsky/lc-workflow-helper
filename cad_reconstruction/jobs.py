@@ -156,6 +156,18 @@ def _result_record(state, source, run_dir, status, reason="", stage="", output=N
     row.partial = bool((manifest or {}).get("partial", False))
     row.preserve_nonmanifold = bool(preserve_nonmanifold)
     row.summary = (manifest or {}).get("summary", "")[:1024]
+    operation_results = (manifest or {}).get("operation_results", {})
+    row.perimeter_summary = (
+        f"Perimeters: {operation_results['perimeter_loops_created']} loops, "
+        f"{operation_results['perimeter_direct_joins']} direct joins, "
+        f"{operation_results['perimeter_skipped']} skipped"
+        if "perimeter_loops_created" in operation_results else ""
+    )
+    row.planar_summary = (
+        f"Planar cleanup: {operation_results['planar_edges_removed']} edges removed; "
+        f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}"
+        if "planar_edges_removed" in operation_results else ""
+    )
     row.reason = reason[:1024]
     row.stage = stage[:256]
     row.run_dir = str(run_dir)
@@ -218,6 +230,7 @@ class CADBatch:
         self.max_workers = min(max(int(state.concurrent_workers), 1), 16)
         self.epsilon_mm = state.epsilon_mm
         self.options = {name: bool(getattr(state, name)) for name in DEFAULTS}
+        self.preserve_curve_segmentation = bool(state.preserve_curve_segmentation)
         self.straight_walls = {"enabled": state.straight_walls,
                                "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
         self.normal_limit_deg = state.normal_limit_deg if state.normal_override else 0.0
@@ -281,7 +294,8 @@ class CADBatch:
             source_hash = fingerprint(source)
             prepare_selected(str(run_dir), epsilon_mm=self.epsilon_mm, obj=source,
                              straight_walls=self.straight_walls, operations=self.options,
-                             preserve_nonmanifold=self.preserve_nonmanifold)
+                             preserve_nonmanifold=self.preserve_nonmanifold,
+                             preserve_curve_segmentation=self.preserve_curve_segmentation)
             worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
             command = [bpy.app.binary_path, "--background", "--factory-startup",
                        "--python-exit-code", "1", "--python", str(worker), "--", str(run_dir)]
