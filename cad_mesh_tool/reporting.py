@@ -7,6 +7,7 @@ EXPLANATIONS = (
     ('UNRESOLVED_PERIMETER', 'There is not enough safe space to build a support loop around this opening.'),
     ('Candidate topology failed', 'The proposed surfaces would leave an open or inconsistent mesh.'),
     ('Protected feature geometry changed', 'This change would alter a disabled or preserved feature.'),
+    ('Protected non-manifold region changed', 'The original non-manifold junction could not be kept unchanged.'),
     ('Protected dependency conflicts', 'A neighboring reconstruction would change the boundary of a preserved area.'),
     ('Checkpoint validation failed', 'The proposed geometry did not pass the full geometry checks.'),
     ('Editable validation failed', 'The editable result did not pass the full geometry checks.'),

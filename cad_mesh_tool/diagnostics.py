@@ -23,10 +23,12 @@ def vertex_maps(candidate, candidate_to_final):
                 generated_candidate_vertices=[i for i, j in enumerate(candidate_to_source) if j < 0])
 
 
-def invalid_boundary_vertices(mesh):
+def invalid_boundary_vertices(mesh, ignored_edges=()):
+    ignored={tuple(sorted(edge)) for edge in ignored_edges}
     incidence = Counter(tuple(sorted((a, b))) for face in mesh.polygons
                         for a, b in zip(face.vertices, (*face.vertices[1:], face.vertices[0])))
-    return sorted({vertex for edge in mesh.edge_keys if incidence.get(tuple(sorted(edge)),0) != 2
+    return sorted({vertex for edge in mesh.edge_keys if tuple(sorted(edge)) not in ignored
+                   and incidence.get(tuple(sorted(edge)),0) != 2
                    for vertex in edge})
 
 
@@ -61,7 +63,11 @@ def add_review_groups(obj, candidate=None, candidate_to_final=None):
         for name, indices in sorted(grouped.items()):
             if indices:
                 obj.vertex_groups.new(name=name).add(sorted(indices), 1.0, 'REPLACE')
-    invalid = invalid_boundary_vertices(obj.data)
+    expected=[]
+    if candidate is not None:
+        expected=[[candidate_to_final[vi] for vi in edge]
+                  for edge in candidate.get('preserved_nonmanifold_edges',[])]
+    invalid = invalid_boundary_vertices(obj.data,expected)
     if invalid:
         obj.vertex_groups.new(name='CAD_Review_InvalidBoundary').add(invalid, 1.0, 'REPLACE')
         report.append(dict(feature=None,reason='Output has boundary or non-manifold edges',

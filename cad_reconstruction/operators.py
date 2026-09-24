@@ -4,7 +4,7 @@ import time
 from pathlib import Path
 
 import bpy
-from bpy.props import IntProperty
+from bpy.props import BoolProperty, IntProperty
 
 from . import jobs, status_overlay
 
@@ -36,6 +36,7 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
     bl_options = {"REGISTER"}
 
     retry_index: IntProperty(default=-1)
+    preserve_nonmanifold: BoolProperty(default=False, options={"HIDDEN"})
     _timer = None
     _job = None
 
@@ -53,21 +54,42 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
             if row.status == "PASS" or row.source is None:
                 raise ValueError("Retry requires a failed source object")
             source = row.source
+            if row.preserve_nonmanifold:
+                self.preserve_nonmanifold = True
         objects = jobs.sources(context, state, source)
-        issues = jobs.preflight(context, state, objects)
+        issues = jobs.preflight_globals(context, state)
         if issues:
             raise ValueError("Preflight: " + "; ".join(issues[:3]))
+        object_issues = [jobs.preflight_object(obj, self.preserve_nonmanifold)
+                         for obj in objects]
         root = jobs.run_root(state)
-        self._job = jobs.CADBatch(context, objects, root)
+        self._job = jobs.CADBatch(context, objects, root,
+                                  preserve_nonmanifold=self.preserve_nonmanifold,
+                                  object_issues=object_issues)
         jobs.ACTIVE_JOB = self._job
         state.running = True
         state.progress = f"Queued {len(objects)} mesh(es)"
 
     def invoke(self, context, event):
         state = context.scene.lcw_cad_reconstruction
+        if 0 <= self.retry_index < len(state.results) and state.results[self.retry_index].preserve_nonmanifold:
+            self.preserve_nonmanifold = True
+        if self.preserve_nonmanifold or state.concurrent_workers >= 8:
+            return context.window_manager.invoke_props_dialog(self, width=420)
         if state.normal_override:
             return context.window_manager.invoke_confirm(self, event)
         return self.execute(context)
+
+    def draw(self, context):
+        if context.scene.lcw_cad_reconstruction.concurrent_workers >= 8:
+            self.layout.label(text="Many Blender workers can exhaust RAM. Continue?", icon="ERROR")
+        if self.preserve_nonmanifold:
+            col = self.layout.column()
+            col.label(text="Existing non-manifold junctions will remain unchanged.", icon="ERROR")
+            col.label(text="Only safely isolated geometry can be reconstructed.")
+            col.label(text="Results require manual review; sources are never modified.")
+            if context.scene.lcw_cad_reconstruction.normal_override:
+                col.label(text="Manual normal validation is also enabled.", icon="ERROR")
 
     def execute(self, context):
         try:

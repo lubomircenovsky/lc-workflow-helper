@@ -202,7 +202,7 @@ try:
         assert batch.step()
         batch.cancel()
         assert batch.cancelled
-        assert batch.process.poll() is not None
+        assert not batch.running
         assert not batch.step()
         assert len(state.results) == count
         assert fingerprint(cube) == before

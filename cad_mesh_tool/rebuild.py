@@ -160,19 +160,26 @@ def rim_aliases(ids, row, theta, full):
     return aliases
 
 
-def reconstruct(snapshot,features,operations=None):
+def reconstruct(snapshot,features,operations=None,protection=None):
     from .operations import normalize
     operations=normalize(operations)
     V=np.array(snapshot['vertices'],dtype=float);F=snapshot['faces'];vertices=V.tolist()
     normals=face_normals(V,F);ef,adj=adjacency(F)
     keep=np.ones(len(V),dtype=bool);changed=set();grids={};fullrings={};claimed=set();rim_alias={};rail_points={}
     protected_faces={fi for feature in features if feature.get('decision','REBUILD')!='REBUILD' for fi in feature['faces']}
+    if protection is not None:
+        protected_faces.update(protection['faces'])
     perimeter_only=[feature for feature in features if feature.get('decision')=='PERIMETER_ONLY']
     perimeter_vertices=set()
     review_features=[dict(id=feature['id'],category=feature['category'],group='CAD_Skipped',
                           reason=feature.get('skip_reason','This feature could not be reconstructed safely'),
                           source_vertices=feature['vertices'])
                      for feature in features if feature.get('decision')=='SKIP']
+    if protection is not None:
+        review_features.append(dict(id=None,category='source_nonmanifold',group='CAD_Skipped',
+                                    reason='Original non-manifold junction preserved unchanged',
+                                    source_vertices=protection['vertices'],
+                                    source_faces=protection['faces']))
     CY=[c for c in features if c.get('decision','REBUILD')=='REBUILD']
     for cy in CY:
         if claimed.intersection(cy['faces']):raise ValueError('Overlapping cylinder ownership')
@@ -474,6 +481,9 @@ def reconstruct(snapshot,features,operations=None):
     result=dict(vertices=[vertices[i] for i in used],faces=[[remap[i] for i in f] for f in outfaces],normals=outnormals,roles=roles,tags=tags,materials=materials,patches=patches,perimeters=perimeters,transitions=transitions,
                 source_to_candidate=[remap.get(i,-1) for i in range(len(V))],
                 candidate_to_source=[i if i<len(V) else -1 for i in used],review_features=review_features)
+    if protection is not None:
+        result['preserved_nonmanifold_edges']=[
+            [remap[vi] for vi in edge] for edge in protection['edges']]
     candidate_faces={tuple(face) for face in result['faces']}
     for fi in protected_faces:
         mapped=[result['source_to_candidate'][vi] for vi in F[fi]]
@@ -488,7 +498,16 @@ def reconstruct(snapshot,features,operations=None):
                                         candidate_vertices=p['hole'],
                                         reason='A support perimeter would not fit; the hole was joined directly'))
     result['topology']=topology(result['faces'])
-    if any(result['topology'][k] for k in ['boundary','nonmanifold','winding','duplicates']):
+    invalid=any(result['topology'][k] for k in ['boundary','winding','duplicates'])
+    if protection is None:
+        invalid=invalid or bool(result['topology']['nonmanifold'])
+    else:
+        from .nonmanifold import preservation_errors
+        errors=preservation_errors(snapshot,result['faces'],result['vertices'],
+                                   result['source_to_candidate'],protection)
+        if errors:
+            raise ValueError('Protected non-manifold region changed: '+str(errors[:8]))
+    if invalid:
         incidence=Counter(tuple(sorted((a,b))) for face in outfaces
                           for a,b in zip(face,face[1:]+face[:1]))
         open_edges=sorted(edge for edge,count in incidence.items() if count==1)

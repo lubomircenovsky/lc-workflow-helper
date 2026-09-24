@@ -20,11 +20,23 @@ def point_triangles_squared(point,triangles):
 
 def accurate_distances(points,triangles,bvh):
     from mathutils import Vector
-    low=triangles.min(axis=1);high=triangles.max(axis=1);values=[]
-    for point in points:
-        index=bvh.find_nearest(Vector(point))[2]
-        upper=float(point_triangles_squared(point,triangles[index:index+1])[0])
-        separation=np.maximum(np.maximum(low-point,point-high),0)
-        eligible=np.flatnonzero(np.sum(separation*separation,axis=1)<=upper+1e-16)
-        values.append(float(np.min(point_triangles_squared(point,triangles[eligible]))))
+    low=triangles.min(axis=1);high=triangles.max(axis=1)
+    values=np.full(len(points),np.inf,dtype=float)
+    # Keep the exact float64 candidate test, but avoid thousands of tiny NumPy calls.
+    for start in range(0,len(points),16):
+        batch=points[start:start+16]
+        nearest=np.asarray([bvh.find_nearest(Vector(point))[2] for point in batch],dtype=int)
+        upper=point_triangles_squared(batch,triangles[nearest])
+        for triangle_start in range(0,len(triangles),8192):
+            triangle_end=triangle_start+8192
+            separation=np.maximum(np.maximum(low[None,triangle_start:triangle_end,:]-batch[:,None,:],
+                                             batch[:,None,:]-high[None,triangle_start:triangle_end,:]),0)
+            point_ids,triangle_ids=np.nonzero(
+                np.sum(separation*separation,axis=2)<=upper[:,None]+1e-16)
+            for pair_start in range(0,len(point_ids),8192):
+                pair_end=pair_start+8192
+                ids=point_ids[pair_start:pair_end]
+                distances=point_triangles_squared(
+                    batch[ids],triangles[triangle_start+triangle_ids[pair_start:pair_end]])
+                np.minimum.at(values[start:start+len(batch)],ids,distances)
     return np.sqrt(values)

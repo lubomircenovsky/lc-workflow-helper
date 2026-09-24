@@ -11,11 +11,13 @@ class LCW_PG_CADResult(bpy.types.PropertyGroup):
     geometry_status: StringProperty()
     coverage_status: StringProperty()
     partial: BoolProperty(default=False)
+    preserve_nonmanifold: BoolProperty(default=False)
     summary: StringProperty()
     reason: StringProperty()
     stage: StringProperty()
     run_dir: StringProperty(subtype="DIR_PATH")
     normal_limit_deg: FloatProperty()
+    elapsed_seconds: FloatProperty()
 
 
 class LCW_PG_CADCollectionBinding(bpy.types.PropertyGroup):
@@ -29,6 +31,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     input_collection: PointerProperty(name="Input Collection", type=bpy.types.Collection)
     output_collection: PointerProperty(name="Output Collection", type=bpy.types.Collection)
     run_root: StringProperty(name="Run Folder", description="Where immutable worker inputs, results and reports are kept; // is relative to the .blend", subtype="DIR_PATH", default="//cad_mesh_runs")
+    concurrent_workers: IntProperty(name="Concurrent Workers", description="Maximum separate Blender processes used for CAD objects; high values require more memory", default=4, min=1, max=16)
     epsilon_mm: FloatProperty(name="Deviation Limit (mm)", description="Maximum sampled shape deviation; not a guarantee of complete feature coverage", default=0.4, min=0.000001)
     straight_walls: BoolProperty(name="Merge Straight Walls", default=True)
     circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce segments around circular sheet-metal holes", default=True)

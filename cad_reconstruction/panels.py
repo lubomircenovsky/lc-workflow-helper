@@ -67,10 +67,21 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
 
         box = _section(layout, state, "run_section_open", "Run", "PLAY")
         if box is not None:
+            worker_row = box.row()
+            worker_row.enabled = not running
+            worker_row.prop(state, "concurrent_workers")
+            if state.concurrent_workers >= 8:
+                box.label(text="8+ Blender processes can exhaust RAM.", icon="ERROR")
             row = box.row(align=True)
             row.enabled = not running
             row.operator("lcw.cad_analyze", text="Analyze", icon="VIEWZOOM")
             row.operator("lcw.cad_reconstruct", text="Reconstruct Selected Operations", icon="MOD_REMESH")
+            guarded = box.column(align=True)
+            guarded.enabled = not running
+            guarded.label(text="Non-manifold input: preserved areas stay unrepaired.", icon="ERROR")
+            guarded.label(text="May take several minutes; review output manually.")
+            guarded.operator("lcw.cad_reconstruct", text="Try Reconstruct Non-Manifold Meshes",
+                             icon="MOD_REMESH").preserve_nonmanifold = True
             if running:
                 box.operator("lcw.cad_cancel", icon="CANCEL")
             box.label(text=state.analysis_summary[:80], icon="INFO")
@@ -91,10 +102,14 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             item = state.results[index]
             result_box = box.box()
             icon = "CHECKMARK" if item.status == "PASS" else "ERROR" if item.status == "FAIL" else "INFO"
-            display_status = "PARTIAL / REVIEW" if item.partial else item.status
+            display_status = "PARTIAL / REVIEW" if item.partial and item.status == "REVIEW" else item.status
             result_box.label(text=f"{item.source.name if item.source else 'Missing source'}: {display_status}", icon=icon)
-            if item.partial:
-                result_box.label(text="Geometry valid; review the incomplete optimization.")
+            if item.status in {"PENDING", "RUNNING"}:
+                result_box.label(text=item.stage or "Waiting for a worker")
+            elif item.partial:
+                result_box.label(text="Source non-manifold area preserved; repair manually."
+                                 if item.preserve_nonmanifold else
+                                 "Geometry valid; review the incomplete optimization.")
                 if item.summary:
                     result_box.label(text=item.summary[:80])
             elif item.status == "PASS":
@@ -104,7 +119,8 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                 for start in range(0, min(len(item.reason), 240), 80):
                     result_box.label(text=item.reason[start:start + 80])
             row = result_box.row(align=True)
+            row.enabled = item.status not in {"PENDING", "RUNNING"}
             row.operator("lcw.cad_select_source", text="Source").result_index = index
             row.operator("lcw.cad_open_run", text="Run Files").result_index = index
-            if item.status != "PASS":
+            if item.status in {"FAIL", "REVIEW"}:
                 row.operator("lcw.cad_reconstruct", text="Retry").retry_index = index

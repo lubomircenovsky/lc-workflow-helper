@@ -12,7 +12,8 @@ def code_hash():
     return hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sorted(root.glob('*.py')))).hexdigest()
 
 
-def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operations=None):
+def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operations=None,
+                     preserve_nonmanifold=False):
     obj=obj or bpy.context.active_object
     if obj is None:raise ValueError('Select a source mesh')
     root=Path(run_dir)
@@ -22,11 +23,12 @@ def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operatio
     from .operations import normalize
     wall_settings=settings(straight_walls)
     selected_operations=normalize(operations)
-    snapshot=capture(obj);root.mkdir(parents=True,exist_ok=True)
+    snapshot=capture(obj,preserve_nonmanifold=preserve_nonmanifold);root.mkdir(parents=True,exist_ok=True)
     profile=dict(tool_version=__version__,code_hash=code_hash(),epsilon_m=epsilon_mm/1000,
                  method='A',delivery='EDITABLE_NGONS',source_name=obj.name,source_hash=snapshot['source_hash'],
                  unit_scale=snapshot['unit_scale'],sample_count=20000,coverage_status='REQUIRES_REVIEW',straight_walls=wall_settings,
-                 compound_perimeter_policy='straight_strips_v1',operations=selected_operations)
+                 compound_perimeter_policy='straight_strips_v1',operations=selected_operations,
+                 preserve_nonmanifold=bool(preserve_nonmanifold))
     (root/'source.json').write_text(json.dumps(snapshot),encoding='utf-8')
     (root/'profile.json').write_text(json.dumps(profile,indent=2),encoding='utf-8')
     print('Prepared immutable source:',root)

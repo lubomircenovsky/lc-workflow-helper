@@ -16,6 +16,7 @@ from cad_mesh_tool.diagnostics import add_review_groups, vertex_maps
 from cad_mesh_tool.operations import normalize
 from cad_mesh_tool.recovery import decisions, is_geometric_conflict, recover
 from cad_mesh_tool.reporting import explain
+from cad_mesh_tool.nonmanifold import protection as nonmanifold_protection
 
 
 def write(root,name,data):
@@ -46,12 +47,19 @@ def map_perimeters(perimeters, remap):
     return mapped
 
 
-def validated_candidate(source, features, operations, profile):
-    candidate=reconstruct(source, features, operations)
+def validated_candidate(source, features, operations, profile, protection=None, timings=None):
+    if timings is None:timings={}
+    phase=time.perf_counter()
+    candidate=reconstruct(source, features, operations, protection=protection)
+    timings['reconstruct_seconds']=time.perf_counter()-phase
+    phase=time.perf_counter()
     mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
+    timings['make_mesh_seconds']=time.perf_counter()-phase
     try:
         validation=validate(source,mesh,origin,candidate['roles'],candidate['perimeters'],
-                            profile['epsilon_m'],profile['sample_count'],require_reduction=False)
+                            profile['epsilon_m'],profile['sample_count'],require_reduction=False,
+                            protection=protection,source_to_output=candidate['source_to_candidate'],
+                            timings=timings)
         if not all(validation['checks'].values()):
             raise ValueError('Checkpoint validation failed: '+str(validation['checks']))
         return candidate,mesh,origin,validation
@@ -105,16 +113,29 @@ def main(root,state=None):
     state['stage']='discover'
     print('DISCOVER',flush=True)
     discovery=discover(source['vertices'],source['faces'],profile['epsilon_m'])
+    discover_seconds=time.time()-start
+    protection=nonmanifold_protection(source,discovery['features']) if profile.get('preserve_nonmanifold') else None
+    if protection is not None:
+        for feature in discovery['features']:
+            if feature['id'] in protection['features']:
+                feature['forced_skip_reason']='Touches an unchanged source non-manifold junction'
     write(root,'plan.json',discovery)
     operations=normalize(profile.get('operations'))
     state['stage']='reconstruct'
     print('RECONSTRUCT',len(discovery['features']),operations,flush=True)
     attempts=0
+    attempt_timings=[]
     def attempt(features):
         nonlocal attempts
         attempts+=1
         print('RECONSTRUCTION_ATTEMPT',attempts,flush=True)
-        return validated_candidate(source,features,operations,profile)
+        timing=dict(attempt=attempts,kind='full')
+        started=time.perf_counter()
+        try:
+            return validated_candidate(source,features,operations,profile,protection,timing)
+        finally:
+            timing['total_seconds']=time.perf_counter()-started
+            attempt_timings.append(timing)
     def dispose(result):
         bpy.data.meshes.remove(result[1])
     screening_profile=dict(profile,sample_count=min(profile['sample_count'],750))
@@ -122,7 +143,13 @@ def main(root,state=None):
         nonlocal attempts
         attempts+=1
         print('RECOVERY_SCREEN',attempts,flush=True)
-        return validated_candidate(source,features,operations,screening_profile)
+        timing=dict(attempt=attempts,kind='screen')
+        started=time.perf_counter()
+        try:
+            return validated_candidate(source,features,operations,screening_profile,protection,timing)
+        finally:
+            timing['total_seconds']=time.perf_counter()-started
+            attempt_timings.append(timing)
     (candidate,mesh,origin,validation),skipped,recovery_attempts=recover(
         discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt)
     review_by_id={item['id']:item for item in candidate.get('review_features',[])
@@ -154,7 +181,10 @@ def main(root,state=None):
         proposed_roles=[ROLES[x.value] for x in proposed.attributes['cad_role'].data]
         proposed_perimeters=map_perimeters(candidate['perimeters'],proposed_remap)
         checked=validate(source,proposed,origin,proposed_roles,proposed_perimeters,
-                         profile['epsilon_m'],profile['sample_count'],require_reduction=False)
+                         profile['epsilon_m'],profile['sample_count'],require_reduction=False,
+                         protection=protection,
+                         source_to_output=[proposed_remap[i] if i>=0 else -1
+                             for i in candidate['source_to_candidate']])
         if not all(checked['checks'].values()):
             raise ValueError(f'{name} validation failed: {checked["checks"]}')
         return checked,proposed_perimeters
@@ -162,6 +192,7 @@ def main(root,state=None):
     if operations['background_cleanup']:
         state['stage']='background_cleanup_unvalidated'
         proposed=None
+        cleanup_started=time.perf_counter()
         try:
             proposed,_,report=cleanup(final)
             checked,perimeters=validate_stage(proposed,remap,'Background cleanup')
@@ -176,9 +207,11 @@ def main(root,state=None):
             bpy.data.meshes.remove(final);final=proposed
             validation_final=checked;final_perimeters=perimeters;cleanup_report=report
             write(root,'validation_background.json',checked)
+        cleanup_report['elapsed_seconds']=time.perf_counter()-cleanup_started
     if operations['straight_walls']:
         state['stage']='straight_walls_unvalidated'
         proposed=None
+        walls_started=time.perf_counter()
         try:
             proposed,report=cleanup_straight_walls(final,profile['straight_walls'])
             next_remap=[report['vertex_map'][i] if i>=0 else -1 for i in remap]
@@ -193,6 +226,7 @@ def main(root,state=None):
             bpy.data.meshes.remove(final);final=proposed;remap=next_remap
             validation_final=checked;final_perimeters=perimeters;wall_report=report
             write(root,'validation_straight_walls.json',checked)
+        wall_report['elapsed_seconds']=time.perf_counter()-walls_started
     if not changed_from_source(source,final,origin):
         raise ValueError('No selected operation produced a validated geometry change')
     if (operations['circular_holes'] or operations['arcs'] or operations['outer_cylinders'] or
@@ -215,11 +249,12 @@ def main(root,state=None):
             review_groups=add_review_groups(obj,candidate,remap)
         obj['cad_checkpoint']=checkpoint;objects.append(obj)
     bpy.data.libraries.write(str(root/'result.blend'),set(objects),fake_user=True)
-    partial=bool(skipped or stage_fallbacks)
+    partial=bool(protection or skipped or stage_fallbacks)
     skipped_ids={item['feature'] for item in skipped}
     rebuilt_count=sum(decisions([feature],operations)[0]['decision']=='REBUILD'
                       and feature['id'] not in skipped_ids for feature in discovery['features'])
     manifest=dict(geometry_status='PASS',coverage_status='REQUIRES_REVIEW',partial=partial,
+                  preserved_source_nonmanifold=protection,
                   operations=operations,skipped_features=skipped,stage_fallbacks=stage_fallbacks,
                   recovery_attempts=recovery_attempts,objects=[o.name for o in objects],
                   result_sha256=hashlib.sha256((root/'result.blend').read_bytes()).hexdigest(),
@@ -235,10 +270,16 @@ def main(root,state=None):
                   direct_join_perimeters=sum(p.get('layout')=='direct_join' for p in candidate['perimeters']),
                   compound_perimeters_dense=[i for i,p in enumerate(candidate['perimeters']) if p.get('kind')=='compound' and p.get('layout')!='straight_strips'],
                   review_groups=review_groups,
+                  timings=dict(discover_seconds=discover_seconds,attempts=attempt_timings,
+                               background_cleanup_seconds=cleanup_report.get('elapsed_seconds',0),
+                               straight_walls_seconds=wall_report.get('elapsed_seconds',0)),
                   source_hash=profile['source_hash'],code_hash=profile['code_hash'])
     manifest['result_matrix_world']=[list(row) for row in result_matrix_world]
     manifest['normal_limit_override_deg']=profile['straight_walls'].get('normal_limit_deg')
-    manifest['summary']=(f"Validated partial result: {len(skipped)} feature(s) preserved, "
+    manifest['summary']=(f"Original non-manifold junction preserved across "
+                         f"{len(protection['faces'])} source faces; {len(skipped)} feature(s) skipped. "
+                         'Inspect CAD_Skipped and REPORT.md.' if protection is not None else
+                         f"Validated partial result: {len(skipped)} feature(s) preserved, "
                          f"{len(stage_fallbacks)} step warning(s). "
                          +('Inspect CAD_Skipped and REPORT.md.' if skipped else 'Inspect REPORT.md.')
                          if partial else 'Selected CAD operations completed; inspect the output visually.')
@@ -251,6 +292,10 @@ def main(root,state=None):
            f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
            f"Triangles: {manifest['before']['t']} -> {manifest['final']['t']}.",
            f"Validated reconstruction attempts: {recovery_attempts}.", '']
+    if protection is not None:
+        lines.append(f"- The original {len(protection['edges'])} non-manifold edge(s) "
+                     f"and their {len(protection['faces'])}-face dependent patch were preserved "
+                     'exactly. This is not a repaired manifold mesh. Review CAD_Skipped.')
     for item in skipped:
         lines.append(f"- Feature {item['feature']} was preserved ({item['preserved_faces']} source faces, "
                      f"{item['preserved_vertices']} vertices): {explain(item['reason'])} "

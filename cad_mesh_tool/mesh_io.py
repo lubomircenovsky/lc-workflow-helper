@@ -10,9 +10,10 @@ def source_topology(obj):
     return topology([list(poly.vertices) for poly in obj.data.polygons])
 
 
-def topology_problem(obj):
+def topology_problem(obj, preserve_nonmanifold=False):
     counts=source_topology(obj)
-    problems={key:counts[key] for key in ('boundary','nonmanifold','winding','duplicates') if counts[key]}
+    blocked=('boundary','winding','duplicates') if preserve_nonmanifold else ('boundary','nonmanifold','winding','duplicates')
+    problems={key:counts[key] for key in blocked if counts[key]}
     if not problems:return ''
     detail=', '.join(f'{key}={count}' for key,count in problems.items())
     return f'{obj.name}: CAD source must be a closed manifold mesh ({detail}). Merge split vertices if needed, then repair and inspect the remaining topology.'
@@ -27,10 +28,10 @@ def fingerprint(obj):
     return hashlib.sha256(json.dumps(data,separators=(',',':')).encode()).hexdigest()
 
 
-def capture(obj):
+def capture(obj,preserve_nonmanifold=False):
     if obj.type!='MESH' or obj.modifiers:raise ValueError('Requires a mesh without unevaluated modifiers')
     if bpy.context.mode!='OBJECT':raise ValueError('Object mode required')
-    problem=topology_problem(obj)
+    problem=topology_problem(obj,preserve_nonmanifold=preserve_nonmanifold)
     if problem:raise ValueError(problem)
     obj.data.calc_loop_triangles();scale=bpy.context.scene.unit_settings.scale_length
     m=np.array(obj.matrix_world,dtype=float);v=np.array([v.co[:] for v in obj.data.vertices]);n=np.array([n.vector[:] for n in obj.data.corner_normals])@np.linalg.inv(m[:3,:3]);n/=np.maximum(np.linalg.norm(n,axis=1)[:,None],1e-30)

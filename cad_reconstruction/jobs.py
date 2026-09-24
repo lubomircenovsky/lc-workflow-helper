@@ -4,6 +4,7 @@ import json
 import math
 import os
 import subprocess
+import time
 import uuid
 from collections import Counter
 from pathlib import Path
@@ -36,7 +37,7 @@ def sources(context, state, retry_source=None):
     return sorted(found.values(), key=lambda obj: (obj.name_full.casefold(), obj.as_pointer()))
 
 
-def preflight(context, state, objects):
+def preflight_globals(context, state):
     problems = []
     try:
         normalize({name: bool(getattr(state, name)) for name in DEFAULTS})
@@ -45,17 +46,6 @@ def preflight(context, state, objects):
     scale = context.scene.unit_settings.scale_length
     if not math.isfinite(scale) or scale <= 0:
         problems.append("Scene unit scale must be positive and finite")
-    for obj in objects:
-        if obj.modifiers:
-            problems.append(f"{obj.name}: unapplied modifiers")
-        if not obj.data.vertices or not obj.data.polygons:
-            problems.append(f"{obj.name}: empty mesh")
-        elif topology_issue := topology_problem(obj):
-            problems.append(topology_issue)
-        if obj.library or obj.data.library:
-            problems.append(f"{obj.name}: linked source is read-only")
-        if abs(obj.matrix_world.determinant()) < 1e-12:
-            problems.append(f"{obj.name}: singular transform")
     if context.mode != "OBJECT":
         problems.append("Switch to Object Mode")
     if not math.isfinite(state.epsilon_mm) or state.epsilon_mm <= 0:
@@ -65,6 +55,32 @@ def preflight(context, state, objects):
             problems.append("Acknowledge shading risk for the manual normal limit")
         if not math.isfinite(state.normal_limit_deg) or state.normal_limit_deg <= 0:
             problems.append("Normal limit must be positive and finite")
+    return problems
+
+
+def preflight_object(obj, preserve_nonmanifold=False):
+    problems = []
+    if obj.modifiers:
+        problems.append(f"{obj.name}: unapplied modifiers")
+    if not obj.data.vertices or not obj.data.polygons:
+        problems.append(f"{obj.name}: empty mesh")
+    else:
+        try:
+            if topology_issue := topology_problem(obj, preserve_nonmanifold=preserve_nonmanifold):
+                problems.append(topology_issue)
+        except Exception as exc:
+            problems.append(f"{obj.name}: topology check failed ({exc})")
+    if obj.library or obj.data.library:
+        problems.append(f"{obj.name}: linked source is read-only")
+    if abs(obj.matrix_world.determinant()) < 1e-12:
+        problems.append(f"{obj.name}: singular transform")
+    return problems
+
+
+def preflight(context, state, objects, preserve_nonmanifold=False):
+    problems = preflight_globals(context, state)
+    for obj in objects:
+        problems.extend(preflight_object(obj, preserve_nonmanifold))
     return problems
 
 
@@ -106,43 +122,51 @@ def _child(parent, name):
     return child
 
 
-def _destination(state, source, status):
-    if state.mode == "SELECTED":
+def _destination(state, source, status, routing=None):
+    mode = routing["mode"] if routing is not None else state.mode
+    input_collection = routing["input"] if routing is not None else state.input_collection
+    output_collection = routing["output"] if routing is not None else state.output_collection
+    if mode == "SELECTED":
         return tuple(source.users_collection)
     for binding in state.bindings:
-        if (binding.source == state.input_collection and binding.output_parent == state.output_collection
-                and binding.branch is not None and binding.branch.name in state.output_collection.children):
+        if (binding.source == input_collection and binding.output_parent == output_collection
+                and binding.branch is not None and binding.branch.name in output_collection.children):
             branch = binding.branch
             break
     else:
-        branch = bpy.data.collections.new(f"{state.input_collection.name}_CAD")
-        state.output_collection.children.link(branch)
+        branch = bpy.data.collections.new(f"{input_collection.name}_CAD")
+        output_collection.children.link(branch)
         binding = state.bindings.add()
-        binding.source = state.input_collection
-        binding.output_parent = state.output_collection
+        binding.source = input_collection
+        binding.output_parent = output_collection
         binding.branch = branch
-        branch["lcw_cad_source_collection"] = state.input_collection.name
+        branch["lcw_cad_source_collection"] = input_collection.name
     return (_child(branch, status),)
 
 
-def _result_record(state, source, run_dir, status, reason="", stage="", output=None, manifest=None):
-    row = state.results.add()
+def _result_record(state, source, run_dir, status, reason="", stage="", output=None,
+                   manifest=None, preserve_nonmanifold=False, row_index=None,
+                   normal_limit_deg=None, elapsed_seconds=0.0):
+    row = state.results[row_index] if row_index is not None else state.results.add()
     row.source = source
     row.output = output
     row.status = status
     row.geometry_status = (manifest or {}).get("geometry_status", "FAIL" if status != "PASS" else "PASS")
     row.coverage_status = (manifest or {}).get("coverage_status", "REQUIRES_REVIEW")
     row.partial = bool((manifest or {}).get("partial", False))
+    row.preserve_nonmanifold = bool(preserve_nonmanifold)
     row.summary = (manifest or {}).get("summary", "")[:1024]
     row.reason = reason[:1024]
     row.stage = stage[:256]
     row.run_dir = str(run_dir)
-    row.normal_limit_deg = state.normal_limit_deg if state.normal_override else 0.0
-    state.active_result = len(state.results) - 1
+    row.normal_limit_deg = (state.normal_limit_deg if state.normal_override else 0.0
+                            ) if normal_limit_deg is None else normal_limit_deg
+    row.elapsed_seconds = elapsed_seconds
+    state.active_result = len(state.results) - 1 if row_index is None else row_index
     return row
 
 
-def _import_result(state, source, run_dir, status):
+def _import_result(state, source, run_dir, status, routing=None):
     before = {o.as_pointer() for o in bpy.data.objects}
     names = apply_result(str(run_dir), include_checkpoint=False)
     imported = [bpy.data.objects.get(name) for name in names]
@@ -151,7 +175,7 @@ def _import_result(state, source, run_dir, status):
     obj = imported[0]
     temporary = tuple(obj.users_collection)
     try:
-        destinations = _destination(state, source, status)
+        destinations = _destination(state, source, status, routing)
         if not destinations:
             raise ValueError("Source object has no direct collection")
         for collection in destinations:
@@ -182,94 +206,114 @@ def _import_result(state, source, run_dir, status):
 
 
 class CADBatch:
-    def __init__(self, context, objects, root):
+    def __init__(self, context, objects, root, preserve_nonmanifold=False,
+                 object_issues=None):
         self.scene = context.scene
-        self.objects = objects
+        self.objects = tuple(objects)
+        self.object_issues = tuple(tuple(issues) for issues in (
+            object_issues if object_issues is not None else (() for _ in objects)))
         self.root = root
-        self.index = 0
-        self.process = None
-        self.log = None
-        self.current_dir = None
-        self.source_hash = ""
+        self.preserve_nonmanifold = preserve_nonmanifold
+        state = self.scene.lcw_cad_reconstruction
+        self.max_workers = min(max(int(state.concurrent_workers), 1), 16)
+        self.epsilon_mm = state.epsilon_mm
+        self.options = {name: bool(getattr(state, name)) for name in DEFAULTS}
+        self.straight_walls = {"enabled": state.straight_walls,
+                               "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
+        self.normal_limit_deg = state.normal_limit_deg if state.normal_override else 0.0
+        self.routing = {"mode": state.mode, "input": state.input_collection,
+                        "output": state.output_collection}
+        self.next_index = 0
+        self.completed = 0
+        self.running = {}
         self.cancelled = False
-        self.log_position = 0
-        self.worker_phase = "Starting"
+        self.row_offset = len(state.results)
+        for source in self.objects:
+            row = state.results.add()
+            row.source = source
+            row.status = "PENDING"
+            row.stage = "Queued"
 
-    def _read_worker_progress(self):
-        path = self.current_dir / "worker.log"
+    def _row(self, index):
+        return self.scene.lcw_cad_reconstruction.results[self.row_offset + index]
+
+    def _read_worker_progress(self, job):
+        path = job["run_dir"] / "worker.log"
         try:
             with path.open("r", encoding="utf-8", errors="replace") as stream:
-                stream.seek(self.log_position)
+                stream.seek(job["log_position"])
                 lines = stream.readlines()
-                self.log_position = stream.tell()
+                job["log_position"] = stream.tell()
         except OSError:
             return
         for line in lines:
             if line.startswith("DISCOVER"):
-                self.worker_phase = "Detecting features"
+                job["phase"] = "Detecting features"
             elif line.startswith("RECOVERY_SCREEN"):
-                self.worker_phase = f"Testing safe regions ({line.split()[-1].strip()})"
+                job["phase"] = f"Testing safe regions ({line.split()[-1].strip()})"
             elif line.startswith("RECONSTRUCTION_ATTEMPT"):
-                self.worker_phase = f"Validating attempt ({line.split()[-1].strip()})"
+                job["phase"] = f"Validating attempt ({line.split()[-1].strip()})"
             elif line.startswith("VALIDATE"):
-                self.worker_phase = "Checking geometry"
+                job["phase"] = "Checking geometry"
+        self._row(job["index"]).stage = job["phase"]
 
-    def cancel(self):
-        self.cancelled = True
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-        if self.log is not None:
-            self.log.close()
-            self.log = None
-        self.scene.lcw_cad_reconstruction.progress = "Cancelled; completed results preserved"
+    def _progress(self):
+        queued = len(self.objects) - self.next_index
+        phases = ", ".join(f"{self.objects[i].name}: {job['phase']}"
+                           for i, job in sorted(self.running.items()))
+        self.scene.lcw_cad_reconstruction.progress = (
+            f"Queued {queued} | Running {len(self.running)} | Done {self.completed}"
+            + (f" | {phases}" if phases else ""))
 
-    def step(self):
+    def _start_worker(self, index):
         state = self.scene.lcw_cad_reconstruction
-        if self.cancelled:
-            return False
-        if self.process is None:
-            if self.index >= len(self.objects):
-                state.progress = f"Complete: {len(self.objects)} source object(s)"
-                return False
-            source = self.objects[self.index]
-            self.current_dir = self.root / uuid.uuid4().hex
-            self.log_position = 0
-            self.worker_phase = "Starting"
-            state.progress = f"Preparing {self.index + 1}/{len(self.objects)}: {source.name}"
-            try:
-                self.source_hash = fingerprint(source)
-                options = {"enabled": state.straight_walls, "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
-                selected = {name: bool(getattr(state, name)) for name in DEFAULTS}
-                prepare_selected(str(self.current_dir), epsilon_mm=state.epsilon_mm, obj=source, straight_walls=options, operations=selected)
-                worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
-                command = [bpy.app.binary_path, "--background", "--factory-startup", "--python-exit-code", "1", "--python", str(worker), "--", str(self.current_dir)]
-                self.log = (self.current_dir / "worker.log").open("w", encoding="utf-8")
-                flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                self.process = subprocess.Popen(command, stdout=self.log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, creationflags=flags)
-            except Exception as exc:
-                _result_record(state, source, self.current_dir, "FAIL", str(exc), "prepare")
-                if state.mode == "COLLECTION":
-                    _destination(state, source, "FAIL")
-                if self.log is not None:
-                    self.log.close()
-                    self.log = None
-                self.index += 1
-            return True
-        if self.process.poll() is None:
-            self._read_worker_progress()
-            state.progress = f"{self.index + 1}/{len(self.objects)} {self.objects[self.index].name}: {self.worker_phase}"
-            return True
-        exit_code = self.process.returncode
-        self.process = None
-        self.log.close()
-        self.log = None
-        source = self.objects[self.index]
-        run_dir = self.current_dir
+        source = self.objects[index]
+        run_dir = self.root / uuid.uuid4().hex
+        row = self._row(index)
+        row.run_dir = str(run_dir)
+        row.status = "RUNNING"
+        row.stage = "Preparing input"
+        started = time.perf_counter()
+        log = None
+        try:
+            if self.object_issues[index]:
+                raise ValueError("; ".join(self.object_issues[index]))
+            source_hash = fingerprint(source)
+            prepare_selected(str(run_dir), epsilon_mm=self.epsilon_mm, obj=source,
+                             straight_walls=self.straight_walls, operations=self.options,
+                             preserve_nonmanifold=self.preserve_nonmanifold)
+            worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
+            command = [bpy.app.binary_path, "--background", "--factory-startup",
+                       "--python-exit-code", "1", "--python", str(worker), "--", str(run_dir)]
+            log = (run_dir / "worker.log").open("w", encoding="utf-8")
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT,
+                                       stdin=subprocess.DEVNULL, creationflags=flags)
+            self.running[index] = {"index": index, "run_dir": run_dir, "process": process,
+                                   "log": log, "log_position": 0, "phase": "Starting",
+                                   "source_hash": source_hash, "started": started}
+            row.stage = "Starting"
+        except Exception as exc:
+            if log is not None:
+                log.close()
+            stage = "preflight" if self.object_issues[index] else "prepare"
+            _result_record(state, source, run_dir, "FAIL", str(exc), stage,
+                           preserve_nonmanifold=self.preserve_nonmanifold,
+                           row_index=self.row_offset + index,
+                           normal_limit_deg=self.normal_limit_deg,
+                           elapsed_seconds=time.perf_counter() - started)
+            if self.routing["mode"] == "COLLECTION":
+                _destination(state, source, "FAIL", self.routing)
+            self.completed += 1
+
+    def _finish_worker(self, index):
+        state = self.scene.lcw_cad_reconstruction
+        job = self.running.pop(index)
+        self._read_worker_progress(job)
+        exit_code = job["process"].returncode
+        job["log"].close()
+        source = self.objects[index]
+        run_dir = job["run_dir"]
         manifest_path = run_dir / "manifest.json"
         failure_path = run_dir / "failure.json"
         try:
@@ -278,23 +322,77 @@ class CADBatch:
         except (OSError, ValueError) as exc:
             manifest = {}
             failure = {"error": f"Unreadable worker report: {exc}"}
-        status = "REVIEW" if exit_code == 0 and manifest.get("geometry_status") == "PASS" and manifest.get("partial") else "PASS" if exit_code == 0 and manifest.get("geometry_status") == "PASS" else "FAIL"
-        reason = manifest.get("summary") or failure.get("message") or failure.get("error", f"Worker exit code {exit_code}" if exit_code else "")
+        status = ("REVIEW" if exit_code == 0 and manifest.get("geometry_status") == "PASS"
+                  and manifest.get("partial") else "PASS" if exit_code == 0
+                  and manifest.get("geometry_status") == "PASS" else "FAIL")
+        reason = (manifest.get("summary") or failure.get("message") or failure.get(
+            "error", f"Worker exit code {exit_code}" if exit_code else ""))
         stage = manifest.get("review_stage") or failure.get("stage", "worker")
         output = None
         try:
-            if fingerprint(source) != self.source_hash:
+            if fingerprint(source) != job["source_hash"]:
                 raise RuntimeError("Source fingerprint changed during worker execution")
             if status != "FAIL":
-                output = _import_result(state, source, run_dir, status)
-            elif state.mode == "COLLECTION":
-                _destination(state, source, "FAIL")
+                output = _import_result(state, source, run_dir, status, self.routing)
+            elif self.routing["mode"] == "COLLECTION":
+                _destination(state, source, "FAIL", self.routing)
         except Exception as exc:
             status = "FAIL"
             reason = f"Import/integrity failure: {exc}"
             stage = "import"
-            if state.mode == "COLLECTION":
-                _destination(state, source, "FAIL")
-        _result_record(state, source, run_dir, status, reason, stage, output, manifest)
-        self.index += 1
+            if self.routing["mode"] == "COLLECTION":
+                _destination(state, source, "FAIL", self.routing)
+        _result_record(state, source, run_dir, status, reason, stage, output, manifest,
+                       preserve_nonmanifold=self.preserve_nonmanifold,
+                       row_index=self.row_offset + index,
+                       normal_limit_deg=self.normal_limit_deg,
+                       elapsed_seconds=time.perf_counter() - job["started"])
+        self.completed += 1
+
+    def cancel(self):
+        self.cancelled = True
+        deadline = time.monotonic() + 2.0
+        for job in self.running.values():
+            process = job["process"]
+            if process.poll() is None:
+                process.terminate()
+        for job in self.running.values():
+            process = job["process"]
+            if process.poll() is None:
+                try:
+                    process.wait(timeout=max(0.0, deadline - time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+            job["log"].close()
+        self.running.clear()
+        rows = self.scene.lcw_cad_reconstruction.results
+        for index in range(len(self.objects) - 1, -1, -1):
+            row_index = self.row_offset + index
+            if rows[row_index].status in {"PENDING", "RUNNING"}:
+                rows.remove(row_index)
+        state = self.scene.lcw_cad_reconstruction
+        state.active_result = min(max(state.active_result, 0), max(len(rows) - 1, 0))
+        state.progress = "Cancelled; completed results preserved"
+
+    def step(self):
+        state = self.scene.lcw_cad_reconstruction
+        if self.cancelled:
+            return False
+        for index, job in sorted(self.running.items()):
+            if job["process"].poll() is not None:
+                self._finish_worker(index)
+                self._progress()
+                return True
+            self._read_worker_progress(job)
+        if self.next_index < len(self.objects) and len(self.running) < self.max_workers:
+            index = self.next_index
+            self.next_index += 1
+            self._start_worker(index)
+            self._progress()
+            return True
+        if not self.running and self.next_index >= len(self.objects):
+            state.progress = f"Complete: {len(self.objects)} source object(s)"
+            return False
+        self._progress()
         return True

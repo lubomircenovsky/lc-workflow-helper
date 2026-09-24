@@ -14,6 +14,7 @@ RECOVERABLE_PREFIXES = (
     "Cannot propagate a perimeter subdivision", "CDT created ambiguous",
     "Branching cylinder", "Expected two cylinder", "Cylinder end contour",
     "Degenerate face",
+    "Protected non-manifold region changed",
 )
 
 
@@ -28,11 +29,14 @@ def decisions(features, operations, accepted=None, reasons=None):
     for feature in features:
         item = dict(feature)
         choice = decision(item['category'], operations)
+        if choice != 'DISABLED' and item.get('forced_skip_reason'):
+            choice = 'SKIP'
         if accepted is not None and choice != 'DISABLED' and item['id'] not in accepted:
             choice = 'SKIP'
         item['decision'] = choice
         if choice == 'SKIP':
-            item['skip_reason'] = reasons.get(item['id'], 'Deferred during safe-recovery search')
+            item['skip_reason'] = item.get('forced_skip_reason') or reasons.get(
+                item['id'], 'Deferred during safe-recovery search')
         result.append(item)
     return result
 
@@ -47,12 +51,16 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
     """
     if max_attempts < 2:
         raise ValueError('Recovery attempt limit must allow a final validation')
-    active = [f['id'] for f in features if decision(f['category'], operations) != 'DISABLED']
+    fixed = [f for f in features if f.get('forced_skip_reason')
+             and decision(f['category'], operations) != 'DISABLED']
+    active = [f['id'] for f in features if decision(f['category'], operations) != 'DISABLED'
+              and not f.get('forced_skip_reason')]
     tries = 0
     try:
         tries += 1
         result = attempt(decisions(features, operations))
-        return result, [], tries
+        return result, [dict(feature=f['id'],reason=f['forced_skip_reason'],group='CAD_Skipped')
+                        for f in fixed], tries
     except Exception as error:
         if not is_geometric_conflict(error) or not active:
             raise
@@ -93,6 +101,8 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
             reasons[removed] = str(error)
         else:
             break
-    skipped = [dict(feature=feature_id, reason=reasons[feature_id], group='CAD_Skipped')
-               for feature_id in active if feature_id not in accepted]
+    skipped = [dict(feature=f['id'],reason=f['forced_skip_reason'],group='CAD_Skipped')
+               for f in fixed]
+    skipped.extend(dict(feature=feature_id, reason=reasons[feature_id], group='CAD_Skipped')
+                   for feature_id in active if feature_id not in accepted)
     return result, skipped, tries

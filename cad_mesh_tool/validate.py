@@ -1,4 +1,5 @@
 """Checks actual Blender loop triangulation; reports sampled, not exact Hausdorff distance."""
+import time
 import numpy as np
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
@@ -31,7 +32,8 @@ def distance(points,v,t):
 
 
 def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20000,
-             require_reduction=True):
+             require_reduction=True,protection=None,source_to_output=None,timings=None):
+    started=time.perf_counter()
     mesh.calc_loop_triangles()
     center=np.asarray(snapshot['vertices']).mean(0)
     v=np.asarray(snapshot['vertices'])-center;t=np.array(snapshot['triangles'])
@@ -39,9 +41,13 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
     bq,ba=quality(v,t);aq,aa=quality(w,u)
     poly=np.array([x.polygon_index for x in mesh.loop_triangles]);labels=np.array(roles)[poly]
     f=[list(p.vertices) for p in mesh.polygons];top=topology(f);oldtop=topology(snapshot['faces'])
-    print('VALIDATE intersections',flush=True);isect=intersections(w,u)
-    print('VALIDATE source_to_result',flush=True);forward=distance(samples(v,t,ba,sample_count),w,u)
-    print('VALIDATE result_to_source',flush=True);backward=distance(samples(w,u,aa,sample_count),v,t)
+    if timings is None:timings={}
+    print('VALIDATE intersections',flush=True);phase=time.perf_counter();isect=intersections(w,u)
+    timings['intersections_seconds']=time.perf_counter()-phase
+    print('VALIDATE source_to_result',flush=True);phase=time.perf_counter();forward=distance(samples(v,t,ba,sample_count),w,u)
+    timings['source_to_result_seconds']=time.perf_counter()-phase
+    print('VALIDATE result_to_source',flush=True);phase=time.perf_counter();backward=distance(samples(w,u,aa,sample_count),v,t)
+    timings['result_to_source_seconds']=time.perf_counter()-phase
     annulus=stats(aq[labels=='PERIMETER_RING'])
     edge_roles={}
     for fi,face in enumerate(f):
@@ -66,15 +72,31 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
                 if not valid:errors.append(dict(perimeter=pi,edge=[a,b],roles=rr))
     from .sparse_perimeter import audit
     strip_errors=audit(w,f,roles,perimeters)
-    checks=dict(closed_oriented=not any(top[k] for k in ('boundary','nonmanifold','winding','duplicates')),
-                euler_unchanged=len(v)-oldtop['edges']+len(snapshot['faces'])==len(w)-top['edges']+len(f),
+    preservation=[]
+    if protection is not None:
+        from .nonmanifold import preservation_errors
+        if source_to_output is None:
+            raise ValueError('Missing explicit source-to-output map for non-manifold validation')
+        preservation=preservation_errors(snapshot,f,
+            (np.asarray([vertex.co[:] for vertex in mesh.vertices])+origin).tolist(),
+            source_to_output,protection,origin=origin)
+    checks=dict(euler_unchanged=len(v)-oldtop['edges']+len(snapshot['faces'])==len(w)-top['edges']+len(f),
                 no_degenerate_triangles=bool(np.all(aa>1e-16)),
                 annulus_quality=annulus.get('max',0)<=20,perimeter_edges=not errors,straight_perimeter_layout=not strip_errors,
                 no_detected_intersections=not isect['intersections'],
                 sampled_distance=max(forward['max_mm'],backward['max_mm'])<=epsilon*1000)
+    if protection is None:
+        checks['closed_oriented']=not any(top[k] for k in ('boundary','nonmanifold','winding','duplicates'))
+    else:
+        checks['source_defects_preserved']=(not preservation and
+            not any(top[k] for k in ('boundary','winding','duplicates')))
     if require_reduction:
         checks['fewer_triangles']=len(u)<len(t)
-    return dict(checks=checks,topology=top,triangle_reduction_observed=len(u)<len(t),
+    timings['validation_seconds']=time.perf_counter()-started
+    return dict(checks=checks,topology=top,preservation_errors=preservation,
+                timings=dict(timings),
+                topology_policy='preserve_source_nonmanifold' if protection else 'closed_manifold',
+                triangle_reduction_observed=len(u)<len(t),
                 triangle_reduction_required=require_reduction,
                 before=dict(v=len(v),f=len(snapshot['faces']),t=len(t),q=stats(bq)),
                 after=dict(v=len(w),f=len(f),t=len(u),q=stats(aq)),quality_by_role={r:stats(aq[labels==r]) for r in sorted(set(labels))},
