@@ -15,9 +15,13 @@ class LCW_PG_CADResult(bpy.types.PropertyGroup):
     summary: StringProperty()
     perimeter_summary: StringProperty()
     planar_summary: StringProperty()
+    metrics_summary: StringProperty()
     reason: StringProperty()
+    technical_reason: StringProperty()
     stage: StringProperty()
     run_dir: StringProperty(subtype="DIR_PATH")
+    details_open: BoolProperty(default=False)
+    files_deleted: BoolProperty(default=False)
     normal_limit_deg: FloatProperty()
     elapsed_seconds: FloatProperty()
 
@@ -28,6 +32,12 @@ class LCW_PG_CADCollectionBinding(bpy.types.PropertyGroup):
     branch: PointerProperty(type=bpy.types.Collection)
 
 
+class LCW_PG_CADAnalysisLine(bpy.types.PropertyGroup):
+    severity: StringProperty()
+    message: StringProperty()
+    technical: StringProperty()
+
+
 class LCW_PG_CADState(bpy.types.PropertyGroup):
     mode: EnumProperty(name="Input", items=(("COLLECTION", "Collection", "Process a collection and its children"), ("SELECTED", "Selected Objects", "Process selected mesh objects")), default="COLLECTION")
     input_collection: PointerProperty(name="Input Collection", type=bpy.types.Collection)
@@ -35,8 +45,8 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     run_root: StringProperty(name="Run Folder", description="Where immutable worker inputs, results and reports are kept; // is relative to the .blend", subtype="DIR_PATH", default="//cad_mesh_runs")
     concurrent_workers: IntProperty(name="Concurrent Workers", description="Maximum separate Blender processes used for CAD objects; high values require more memory", default=4, min=1, max=16)
     epsilon_mm: FloatProperty(name="Deviation Limit (mm)", description="Maximum sampled shape deviation; not a guarantee of complete feature coverage", default=0.4, min=0.000001)
-    straight_walls: BoolProperty(name="Merge Straight Walls", default=True)
-    circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce segments around circular sheet-metal holes", default=True)
+    straight_walls: BoolProperty(name="Merge Straight Walls", description="Merge validated straight wall patches without changing curved walls", default=True)
+    circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce circular sheet-metal holes unless Keep Curve Segments is active", default=True)
     preserve_curve_segmentation: BoolProperty(name="Preserve Curve Segmentation", description="Keep existing hole and curved-surface contours unchanged while applying selected perimeter and planar cleanup operations", default=False)
     perimeter_loops: BoolProperty(name="Perimeter Loops", description="Build support loops around circular holes; can be run alone on an existing mesh", default=True)
     arcs: BoolProperty(name="Arcs", description="Detect and reduce concave and convex open arcs", default=True)
@@ -51,6 +61,15 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     running: BoolProperty(default=False)
     progress: StringProperty(default="Idle")
     analysis_summary: StringProperty(default="Run Analyze before a long batch.")
+    analysis_ready: BoolProperty(default=False)
+    analysis_meshes: IntProperty(default=0)
+    analysis_blockers: IntProperty(default=0)
+    analysis_notes: IntProperty(default=0)
+    analysis_lines: CollectionProperty(type=LCW_PG_CADAnalysisLine)
+    analysis_details_open: BoolProperty(default=False)
+    results_visible: IntProperty(default=5, min=5)
+    cleanup_running: BoolProperty(default=False, options={"SKIP_SAVE"})
+    cleanup_progress: StringProperty(default="", options={"SKIP_SAVE"})
     input_section_open: BoolProperty(name="Input", default=True)
     options_section_open: BoolProperty(name="Reconstruction Options", default=True)
     normal_section_open: BoolProperty(name="Advanced Normal Validation", default=False)
@@ -58,7 +77,8 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     results_section_open: BoolProperty(name="Results", default=True)
 
 
-CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding, LCW_PG_CADState)
+CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding,
+           LCW_PG_CADAnalysisLine, LCW_PG_CADState)
 
 
 def register_properties():

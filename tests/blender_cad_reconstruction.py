@@ -40,9 +40,9 @@ try:
         if area.type == "VIEW_3D"
     )
     shading_before = (space.shading.color_type, space.shading.wireframe_color_type)
-    status_overlay.show(space)
+    status_overlay.show(space, state)
     assert status_overlay.is_enabled(space)
-    assert (space.shading.color_type, space.shading.wireframe_color_type) == shading_before
+    assert (space.shading.color_type, space.shading.wireframe_color_type) == ("OBJECT", "OBJECT")
     status_overlay.hide(space)
     assert not status_overlay.is_enabled(space)
     assert (space.shading.color_type, space.shading.wireframe_color_type) == shading_before
@@ -74,7 +74,7 @@ try:
         if row.output:
             assert row.output.data is not cube.data
             assert row.output.name.endswith("_CAD_REVIEW") or row.output.name.endswith("_CAD_PASS")
-            assert all(abs(a - b) < 1e-6 for a, b in zip(row.output.color, jobs.COLORS[row.status]))
+            assert all(abs(a - b) < 1e-6 for a, b in zip(row.output.color, cube.color))
             assert tuple(row.output.users_collection) == tuple(cube.users_collection)
             assert [obj for obj, _color in status_overlay._status_objects(state)] == [row.output]
             assert (world_center(cube) - world_center(row.output)).length < 0.1

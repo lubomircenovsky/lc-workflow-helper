@@ -100,7 +100,7 @@ def analyze_risks(objects):
     return notes
 
 
-def run_root(state):
+def run_root(state, create=True):
     raw = state.run_root.strip()
     if not raw:
         raise ValueError("Choose a run folder")
@@ -110,7 +110,8 @@ def run_root(state):
     addon_root = Path(__file__).resolve().parents[1]
     if root == addon_root or addon_root in root.parents:
         raise ValueError("Run Folder must be outside the installed addon")
-    root.mkdir(parents=True, exist_ok=True)
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -146,7 +147,7 @@ def _destination(state, source, status, routing=None):
 
 def _result_record(state, source, run_dir, status, reason="", stage="", output=None,
                    manifest=None, preserve_nonmanifold=False, row_index=None,
-                   normal_limit_deg=None, elapsed_seconds=0.0):
+                   normal_limit_deg=None, elapsed_seconds=0.0, technical_reason=""):
     row = state.results[row_index] if row_index is not None else state.results.add()
     row.source = source
     row.output = output
@@ -168,7 +169,16 @@ def _result_record(state, source, run_dir, status, reason="", stage="", output=N
         f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}"
         if "planar_edges_removed" in operation_results else ""
     )
+    metrics = []
+    for key, label in (("curves_reduced", "curves reduced"),
+                       ("perimeter_loops_created", "loops made"),
+                       ("planar_edges_removed", "flat edges removed")):
+        count = operation_results.get(key, 0)
+        if count:
+            metrics.append(f"{count:,} {label}")
+    row.metrics_summary = " | ".join(metrics)
     row.reason = reason[:1024]
+    row.technical_reason = technical_reason[:1024]
     row.stage = stage[:256]
     row.run_dir = str(run_dir)
     row.normal_limit_deg = (state.normal_limit_deg if state.normal_override else 0.0
@@ -197,8 +207,11 @@ def _import_result(state, source, run_dir, status, routing=None):
         obj.parent = source.parent
         obj.matrix_world = world
         obj.name = f"{source.name}_CAD_{status}"
-        obj.color = COLORS[status]
+        from . import status_overlay
+
+        obj.color = status_overlay.base_color(source)
         obj["lcw_cad_run_id"] = run_dir.name
+        obj["lcw_cad_status"] = status
         obj["lcw_cad_source_name"] = source.name
         for collection in temporary:
             if collection not in destinations:
@@ -360,7 +373,12 @@ class CADBatch:
                        preserve_nonmanifold=self.preserve_nonmanifold,
                        row_index=self.row_offset + index,
                        normal_limit_deg=self.normal_limit_deg,
-                       elapsed_seconds=time.perf_counter() - job["started"])
+                       elapsed_seconds=time.perf_counter() - job["started"],
+                       technical_reason=failure.get("error", "") if status == "FAIL" else "")
+        if output is not None:
+            from . import status_overlay
+
+            status_overlay.refresh(state)
         self.completed += 1
 
     def cancel(self):

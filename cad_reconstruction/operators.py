@@ -6,7 +6,7 @@ from pathlib import Path
 import bpy
 from bpy.props import BoolProperty, IntProperty
 
-from . import jobs, status_overlay
+from . import jobs, status_overlay, ui_text
 
 
 class LCW_OT_cad_analyze(bpy.types.Operator):
@@ -17,22 +17,39 @@ class LCW_OT_cad_analyze(bpy.types.Operator):
 
     def execute(self, context):
         state = context.scene.lcw_cad_reconstruction
+        state.analysis_lines.clear()
         try:
             objects = jobs.sources(context, state)
             issues = jobs.preflight(context, state, objects)
             notes = jobs.analyze_risks(objects)
         except Exception as exc:
-            self.report({"ERROR"}, str(exc))
+            objects, issues, notes = [], [str(exc)], []
+            self.report({"ERROR"}, ui_text.analysis_issue(str(exc)))
+        for severity, messages, shortener in (
+                ("BLOCKER", issues, ui_text.analysis_issue),
+                ("NOTE", notes, ui_text.analysis_note)):
+            for message in messages:
+                line = state.analysis_lines.add()
+                line.severity = severity
+                line.message = shortener(message)
+                line.technical = message
+        state.analysis_ready = True
+        state.analysis_meshes = len(objects)
+        state.analysis_blockers = len(issues)
+        state.analysis_notes = len(notes)
+        mesh_label = "mesh" if len(objects) == 1 else "meshes"
+        state.analysis_summary = (f"{len(objects)} {mesh_label} | {len(issues)} blocked | "
+                                  f"{len(notes)} notes")
+        if not objects:
             return {"CANCELLED"}
-        state.analysis_summary = f"{len(objects)} mesh(es); {len(issues)} blocker(s), {len(notes)} risk note(s). " + "; ".join((issues + notes)[:3])
-        self.report({"WARNING"} if issues or notes else {"INFO"}, state.analysis_summary[:240])
+        self.report({"WARNING"} if issues or notes else {"INFO"}, state.analysis_summary)
         return {"FINISHED"}
 
 
 class LCW_OT_cad_reconstruct(bpy.types.Operator):
     bl_idname = "lcw.cad_reconstruct"
     bl_label = "Reconstruct CAD Meshes"
-    bl_description = "Run the bundled CAD worker on independent sources; never auto-save the .blend"
+    bl_description = "Reconstruct selected CAD operations; source meshes stay unchanged"
     bl_options = {"REGISTER"}
 
     retry_index: IntProperty(default=-1)
@@ -42,7 +59,16 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.scene is not None and context.mode == "OBJECT" and jobs.ACTIVE_JOB is None
+        return (context.scene is not None and context.mode == "OBJECT"
+                and jobs.ACTIVE_JOB is None
+                and not context.scene.lcw_cad_reconstruction.cleanup_running)
+
+    @classmethod
+    def description(cls, _context, properties):
+        if getattr(properties, "preserve_nonmanifold", False):
+            return ("Try safe regions of a non-manifold mesh. Bad edges stay unchanged; "
+                    "may take minutes. Output needs manual review. Source stays unchanged")
+        return cls.bl_description
 
     def _start(self, context):
         state = context.scene.lcw_cad_reconstruction
@@ -173,14 +199,14 @@ class LCW_OT_cad_select_source(bpy.types.Operator):
 class LCW_OT_cad_object_colors(bpy.types.Operator):
     bl_idname = "lcw.cad_object_colors"
     bl_label = "Show CAD Status Colors"
-    bl_description = "Show colored wireframes only on generated CAD results in this viewport"
+    bl_description = "Temporarily show CAD status colors via Object Color; save this viewport's shading and CAD result colors"
 
     @classmethod
     def poll(cls, context):
         return context.area is not None and context.area.type == "VIEW_3D"
 
     def execute(self, context):
-        status_overlay.show(context.space_data)
+        status_overlay.show(context.space_data, context.scene.lcw_cad_reconstruction)
         context.area.tag_redraw()
         return {"FINISHED"}
 
@@ -188,7 +214,7 @@ class LCW_OT_cad_object_colors(bpy.types.Operator):
 class LCW_OT_cad_hide_object_colors(bpy.types.Operator):
     bl_idname = "lcw.cad_hide_object_colors"
     bl_label = "Hide CAD Status Colors"
-    bl_description = "Hide the CAD result wireframes without changing viewport shading"
+    bl_description = "Restore previous shading in all CAD-colored viewports and restore the original CAD result colors"
 
     @classmethod
     def poll(cls, context):
