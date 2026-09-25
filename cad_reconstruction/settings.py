@@ -49,6 +49,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce circular sheet-metal holes unless Keep Curve Segments is active", default=True)
     preserve_curve_segmentation: BoolProperty(name="Preserve Curve Segmentation", description="Keep existing hole and curved-surface contours unchanged while applying selected perimeter and planar cleanup operations", default=False)
     perimeter_loops: BoolProperty(name="Perimeter Loops", description="Build support loops around circular holes; can be run alone on an existing mesh", default=True)
+    perimeter_clearance_mm: FloatProperty(name="Clearance (mm)", description="Preferred nominal gap from a circular hole to its square support loop in millimetres; 0 = Auto; smaller safe gaps may be used when space is tight", default=0.0, min=0.0, precision=2)
     arcs: BoolProperty(name="Arcs", description="Detect and reduce concave and convex open arcs", default=True)
     outer_cylinders: BoolProperty(name="Outer Cylinders", description="Reconstruct closed outer cylindrical surfaces", default=True)
     background_cleanup: BoolProperty(name="Background Cleanup", description="Dissolve only validated background-plane edges", default=True)

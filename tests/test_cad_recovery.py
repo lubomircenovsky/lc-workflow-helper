@@ -4,6 +4,7 @@ import unittest
 
 from cad_mesh_tool.operations import DEFAULTS, decision, normalize
 from cad_mesh_tool.recovery import decisions, recover
+from cad_mesh_tool.reporting import explain, skipped_summary
 
 
 FEATURES = [
@@ -14,6 +15,17 @@ FEATURES = [
 
 
 class OperationTests(unittest.TestCase):
+    def test_shading_skip_has_actionable_reason(self):
+        reason = 'Shading boundary in planar patch'
+        self.assertIn('Face directions', explain(reason))
+        self.assertIn('custom normals are already ignored', explain(reason))
+        self.assertEqual(
+            skipped_summary([{'reason': reason}, {'reason': reason}]),
+            '2 feature(s) skipped: face directions conflict in a flat region.',
+        )
+        mixed = skipped_summary([{'reason': reason}, {'reason': 'UNRESOLVED_PERIMETER'}])
+        self.assertIn('1 other feature(s)', mixed)
+
     def test_defaults_and_invalid_options(self):
         self.assertEqual(normalize(), DEFAULTS)
         with self.assertRaises(ValueError):

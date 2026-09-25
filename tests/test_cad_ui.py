@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from cad_reconstruction import run_files, ui_text
 
@@ -49,6 +50,17 @@ class RunFileTests(unittest.TestCase):
 
 
 class CopyTests(unittest.TestCase):
+    def test_review_card_names_lost_sharp_edges(self):
+        row = SimpleNamespace(status="REVIEW", preserve_nonmanifold=False,
+                              reason="1 sharp edge(s) changed; review shading.")
+        self.assertEqual(ui_text.result_brief(row), "Sharp edges changed. Review shading.")
+
+    def test_review_card_names_normals_blocker(self):
+        row = SimpleNamespace(status="REVIEW", preserve_nonmanifold=False,
+                              reason="6 feature(s) skipped: face directions conflict in a flat region.")
+        self.assertEqual(ui_text.result_brief(row),
+                         "Face directions conflict. Check local geometry.")
+
     def test_short_analysis_text(self):
         issue = "Part: CAD source must be a closed manifold mesh (boundary=2, nonmanifold=1)."
         self.assertIn("2 open edges", ui_text.analysis_issue(issue))

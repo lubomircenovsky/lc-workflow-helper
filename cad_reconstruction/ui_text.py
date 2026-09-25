@@ -68,6 +68,10 @@ def result_brief(row):
     if row.status == "REVIEW":
         if row.preserve_nonmanifold:
             return "Partial mesh. Bad edges kept. Review."
+        if "sharp edge(s) changed" in row.reason.lower():
+            return "Sharp edges changed. Review shading."
+        if "face directions conflict" in row.reason.lower():
+            return "Face directions conflict. Check local geometry."
         return "Partial mesh. Check skipped areas."
     reason = row.technical_reason or row.reason
     if "CAD source must be a closed manifold mesh" in reason:

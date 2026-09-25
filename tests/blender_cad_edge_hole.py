@@ -43,6 +43,7 @@ for loop, reverse in ((range(4), False), (range(4, count), True)):
 mesh = bpy.data.meshes.new("CAD Near Edge Hole")
 mesh.from_pydata(vertices, [], faces)
 mesh.update()
+next(edge for edge in mesh.edges if set(edge.vertices) == {0, 1}).use_edge_sharp = True
 obj = bpy.data.objects.new("CAD Near Edge Hole", mesh)
 bpy.context.scene.collection.objects.link(obj)
 assert not topology_problem(obj), topology(faces)
@@ -53,6 +54,7 @@ candidate = reconstruct(source, plan["features"])
 direct = [item for item in candidate["perimeters"] if item["layout"] == "direct_join"]
 assert direct, "Near-edge circular hole did not use direct triangulation"
 result_mesh, origin = make_mesh(candidate, "CAD Near Edge Result")
+assert any(edge.use_edge_sharp for edge in result_mesh.edges)
 review_object = bpy.data.objects.new('CAD Near Edge Review', result_mesh)
 assert any(item['group'] == 'CAD_Skipped' for item in candidate['review_features'])
 assert any(item['group'] == 'CAD_Skipped' for item in add_review_groups(review_object, candidate))
@@ -60,10 +62,23 @@ assert review_object.vertex_groups.get('CAD_Skipped') is not None
 validation = validate(
     source, result_mesh, origin, candidate["roles"], candidate["perimeters"],
     epsilon=0.0004, sample_count=500,
+    source_to_output=candidate['source_to_candidate'],
 )
 assert all(validation["checks"].values()), validation["checks"]
+checkpoint_sharp = next(edge for edge in result_mesh.edges if edge.use_edge_sharp)
+checkpoint_sharp.use_edge_sharp = False
+rejected = validate(source, result_mesh, origin, candidate['roles'], candidate['perimeters'],
+                    epsilon=0.0004, sample_count=100,
+                    source_to_output=candidate['source_to_candidate'])
+assert not rejected['sharp_edges_preserved']
+assert all(rejected['checks'].values())
+checkpoint_sharp.use_edge_sharp = True
 clean_mesh, _, _ = cleanup(result_mesh)
+assert any(edge.use_edge_sharp for edge in clean_mesh.edges)
 final_mesh, wall_report = cleanup_straight_walls(clean_mesh, {"enabled": True})
+sharp = {tuple(sorted(edge.vertices)) for edge in final_mesh.edges if edge.use_edge_sharp}
+assert tuple(sorted(wall_report['vertex_map'][candidate['source_to_candidate'][i]]
+                    for i in (0, 1))) in sharp
 remap = wall_report["vertex_map"]
 final_perimeters = [
     dict(item, ids=[remap[i] for i in item["ids"]],
@@ -75,6 +90,7 @@ final_roles = [ROLES[value.value] for value in final_mesh.attributes["cad_role"]
 final_validation = validate(
     source, final_mesh, origin, final_roles, final_perimeters,
     epsilon=0.0004, sample_count=20000,
+    source_to_output=[remap[i] if i >= 0 else -1 for i in candidate['source_to_candidate']],
 )
 assert all(final_validation["checks"].values()), final_validation["checks"]
 assert not topology_problem(obj)

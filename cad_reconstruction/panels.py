@@ -49,8 +49,13 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             controls = box.column(align=True)
             controls.enabled = not busy
             controls.prop(state, "epsilon_mm")
+            controls.prop(state, "circular_holes", text="Circular Holes", toggle=True)
+            perimeter = controls.split(factor=0.5, align=True)
+            perimeter.prop(state, "perimeter_loops", text="Perimeter Loops", toggle=True)
+            field = perimeter.row(align=True)
+            field.enabled = state.perimeter_loops
+            field.prop(state, "perimeter_clearance_mm", text="Clearance (mm)")
             for left, left_label, right, right_label in (
-                    ("circular_holes", "Circular Holes", "perimeter_loops", "Perimeter Loops"),
                     ("arcs", "Arcs", "outer_cylinders", "Outer Cylinders"),
                     ("background_cleanup", "Planar Cleanup", "straight_walls", "Straight Walls")):
                 row = controls.row(align=True)
@@ -153,6 +158,9 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                 if detail:
                     for line in ui_text.lines(detail):
                         result_box.label(text=line)
+            if item.status == "REVIEW" and item.reason:
+                for line in ui_text.lines(item.reason):
+                    result_box.label(text=line)
             if item.status == "FAIL":
                 result_box.label(text=f"Stage: {item.stage or 'worker'}")
                 detail = item.technical_reason or item.reason

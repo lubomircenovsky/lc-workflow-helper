@@ -15,7 +15,7 @@ from cad_mesh_tool.straight_walls import cleanup_straight_walls
 from cad_mesh_tool.diagnostics import add_review_groups, vertex_maps
 from cad_mesh_tool.operations import normalize
 from cad_mesh_tool.recovery import decisions, is_geometric_conflict, recover
-from cad_mesh_tool.reporting import explain
+from cad_mesh_tool.reporting import explain, skipped_summary
 from cad_mesh_tool.nonmanifold import protection as nonmanifold_protection
 
 
@@ -51,7 +51,8 @@ def validated_candidate(source, features, operations, profile, protection=None, 
     if timings is None:timings={}
     phase=time.perf_counter()
     candidate=reconstruct(source, features, operations, protection=protection,
-                          preserve_curve_segmentation=profile.get('preserve_curve_segmentation',False))
+                          preserve_curve_segmentation=profile.get('preserve_curve_segmentation',False),
+                          preferred_clearance_m=profile.get('perimeter_clearance_mm',0.0)/1000)
     timings['reconstruct_seconds']=time.perf_counter()-phase
     phase=time.perf_counter()
     mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
@@ -247,7 +248,8 @@ def main(root,state=None):
             review_groups=add_review_groups(obj,candidate,remap)
         obj['cad_checkpoint']=checkpoint;objects.append(obj)
     bpy.data.libraries.write(str(root/'result.blend'),set(objects),fake_user=True)
-    partial=bool(protection or skipped or stage_fallbacks)
+    lost_sharp_edges=validation_final['sharp_edge_errors']
+    partial=bool(protection or skipped or stage_fallbacks or lost_sharp_edges)
     skipped_ids={item['feature'] for item in skipped}
     rebuilt_count=sum(decisions([feature],operations,
                                 preserve_curve_segmentation=preserve_curve_segmentation)[0]['decision']=='REBUILD'
@@ -280,6 +282,10 @@ def main(root,state=None):
                   preserved_source_nonmanifold=protection,
                   operations=operations,skipped_features=skipped,stage_fallbacks=stage_fallbacks,
                   preserve_curve_segmentation=preserve_curve_segmentation,
+                  perimeter_clearance_mm=profile.get('perimeter_clearance_mm',0.0),
+                  circular_perimeter_clearances_mm=[p['clearance_m']*1000 for p in final_perimeters
+                                                    if p.get('kind')=='circular' and p.get('clearance_m') is not None],
+                  lost_sharp_edges=lost_sharp_edges,
                   operation_results=operation_results,
                   recovery_attempts=recovery_attempts,objects=[o.name for o in objects],
                   result_sha256=hashlib.sha256((root/'result.blend').read_bytes()).hexdigest(),
@@ -307,7 +313,14 @@ def main(root,state=None):
                          f"Validated partial result: {len(skipped)} feature(s) preserved, "
                          f"{len(stage_fallbacks)} step warning(s). "
                          +('Inspect CAD_Skipped and REPORT.md.' if skipped else 'Inspect REPORT.md.')
-                         if partial else 'Selected CAD operations completed; inspect the output visually.')
+                         if skipped or stage_fallbacks else
+                         'Validated output needs shading review.' if lost_sharp_edges else
+                         'Selected CAD operations completed; inspect the output visually.')
+    manifest['skip_summary']=skipped_summary(skipped)
+    if manifest['skip_summary']:
+        manifest['summary'] += ' ' + manifest['skip_summary']
+    if lost_sharp_edges:
+        manifest['summary'] += f' {len(lost_sharp_edges)} sharp edge(s) changed; review shading.'
     if manifest['normal_limit_override_deg'] is not None:
         manifest['normal_limit_warning']='Manual normal limit may accept visible shading changes' if manifest['normal_limit_override_deg']>0.05 else ''
     write(root,'manifest.json',manifest)
@@ -316,6 +329,7 @@ def main(root,state=None):
            'The output passed geometry validation. Visual review is still required.', '',
            f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
            f"Preserve curve segmentation: {preserve_curve_segmentation}.",
+           f"Preferred perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm (0 = automatic).",
            f"Circular holes detected: {operation_results['circular_holes_detected']}.",
            f"Perimeter loops: {created_loops} created, {direct_joins} direct joins without a loop, "
            f"{operation_results['perimeter_skipped']} skipped ({operation_results['perimeter_not_attempted']} not attempted).",
@@ -325,6 +339,17 @@ def main(root,state=None):
            f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}.",
            f"Triangles: {manifest['before']['t']} -> {manifest['final']['t']}.",
            f"Validated reconstruction attempts: {recovery_attempts}.", '']
+    if manifest['circular_perimeter_clearances_mm']:
+        used=manifest['circular_perimeter_clearances_mm']
+        lines.append(f"Selected circular perimeter clearance (nominal): {min(used):.2f}-{max(used):.2f} mm.")
+    if lost_sharp_edges:
+        lines.append(f"Shading review: {len(lost_sharp_edges)} source sharp edge(s) were removed; "
+                     "geometry validation passed. Inspect CAD_Review_SharpEdges if present and adjust shading manually.")
+        lines.append(f"Source vertex pairs (first 20): {lost_sharp_edges[:20]}.")
+        if len(lost_sharp_edges)>20:
+            lines.append(f"The remaining {len(lost_sharp_edges)-20} pairs are in validation_final.json.")
+    if manifest['skip_summary']:
+        lines.append(f"Skipped cause: {manifest['skip_summary']}")
     if protection is not None:
         lines.append(f"- The original {len(protection['edges'])} non-manifold edge(s) "
                      f"and their {len(protection['faces'])}-face dependent patch were preserved "

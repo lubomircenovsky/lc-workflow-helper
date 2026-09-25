@@ -13,12 +13,15 @@ def code_hash():
 
 
 def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operations=None,
-                     preserve_nonmanifold=False,preserve_curve_segmentation=False):
+                     preserve_nonmanifold=False,preserve_curve_segmentation=False,
+                     perimeter_clearance_mm=0.0):
     obj=obj or bpy.context.active_object
     if obj is None:raise ValueError('Select a source mesh')
     root=Path(run_dir)
     if (root/'source.json').exists():raise FileExistsError('Use a new run directory; existing input is immutable')
     if epsilon_mm<=0:raise ValueError('epsilon_mm must be positive')
+    if not math.isfinite(perimeter_clearance_mm) or perimeter_clearance_mm<0:
+        raise ValueError('Perimeter clearance must be non-negative and finite')
     from .straight_walls import settings
     from .operations import normalize
     wall_settings=settings(straight_walls)
@@ -29,7 +32,8 @@ def prepare_selected(run_dir,epsilon_mm=.4,obj=None,straight_walls=None,operatio
                  unit_scale=snapshot['unit_scale'],sample_count=20000,coverage_status='REQUIRES_REVIEW',straight_walls=wall_settings,
                  compound_perimeter_policy='straight_strips_v1',operations=selected_operations,
                  preserve_nonmanifold=bool(preserve_nonmanifold),
-                 preserve_curve_segmentation=bool(preserve_curve_segmentation))
+                 preserve_curve_segmentation=bool(preserve_curve_segmentation),
+                 perimeter_clearance_mm=perimeter_clearance_mm)
     (root/'source.json').write_text(json.dumps(snapshot),encoding='utf-8')
     (root/'profile.json').write_text(json.dumps(profile,indent=2),encoding='utf-8')
     print('Prepared immutable source:',root)

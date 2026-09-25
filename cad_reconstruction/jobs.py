@@ -50,6 +50,8 @@ def preflight_globals(context, state):
         problems.append("Switch to Object Mode")
     if not math.isfinite(state.epsilon_mm) or state.epsilon_mm <= 0:
         problems.append("Deviation limit must be positive and finite")
+    if not math.isfinite(state.perimeter_clearance_mm) or state.perimeter_clearance_mm < 0:
+        problems.append("Perimeter clearance must be non-negative and finite")
     if state.normal_override:
         if not state.normal_risk_ack:
             problems.append("Acknowledge shading risk for the manual normal limit")
@@ -244,6 +246,7 @@ class CADBatch:
         self.epsilon_mm = state.epsilon_mm
         self.options = {name: bool(getattr(state, name)) for name in DEFAULTS}
         self.preserve_curve_segmentation = bool(state.preserve_curve_segmentation)
+        self.perimeter_clearance_mm = state.perimeter_clearance_mm
         self.straight_walls = {"enabled": state.straight_walls,
                                "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
         self.normal_limit_deg = state.normal_limit_deg if state.normal_override else 0.0
@@ -308,7 +311,8 @@ class CADBatch:
             prepare_selected(str(run_dir), epsilon_mm=self.epsilon_mm, obj=source,
                              straight_walls=self.straight_walls, operations=self.options,
                              preserve_nonmanifold=self.preserve_nonmanifold,
-                             preserve_curve_segmentation=self.preserve_curve_segmentation)
+                             preserve_curve_segmentation=self.preserve_curve_segmentation,
+                             perimeter_clearance_mm=self.perimeter_clearance_mm)
             worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
             command = [bpy.app.binary_path, "--background", "--factory-startup",
                        "--python-exit-code", "1", "--python", str(worker), "--", str(run_dir)]

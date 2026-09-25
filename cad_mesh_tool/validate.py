@@ -80,6 +80,15 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
         preservation=preservation_errors(snapshot,f,
             (np.asarray([vertex.co[:] for vertex in mesh.vertices])+origin).tolist(),
             source_to_output,protection,origin=origin)
+    sharp_errors=[]
+    if snapshot.get('sharp_edges') and source_to_output is None:
+        raise ValueError('Missing explicit source-to-output map for sharp-edge validation')
+    if source_to_output is not None:
+        output_sharp={tuple(sorted(edge.vertices)) for edge in mesh.edges if edge.use_edge_sharp}
+        for a,b in snapshot.get('sharp_edges',[]):
+            mapped=(source_to_output[a],source_to_output[b])
+            if min(mapped)<0 or tuple(sorted(mapped)) not in output_sharp:
+                sharp_errors.append([a,b])
     checks=dict(euler_unchanged=len(v)-oldtop['edges']+len(snapshot['faces'])==len(w)-top['edges']+len(f),
                 no_degenerate_triangles=bool(np.all(aa>1e-16)),
                 annulus_quality=annulus.get('max',0)<=20,perimeter_edges=not errors,straight_perimeter_layout=not strip_errors,
@@ -94,6 +103,7 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
         checks['fewer_triangles']=len(u)<len(t)
     timings['validation_seconds']=time.perf_counter()-started
     return dict(checks=checks,topology=top,preservation_errors=preservation,
+                sharp_edges_preserved=not sharp_errors,sharp_edge_errors=sharp_errors,
                 timings=dict(timings),
                 topology_policy='preserve_source_nonmanifold' if protection else 'closed_manifold',
                 triangle_reduction_observed=len(u)<len(t),

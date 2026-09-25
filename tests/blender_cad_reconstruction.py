@@ -34,6 +34,7 @@ try:
     cube = bpy.context.object
     before = fingerprint(cube)
     state = bpy.context.scene.lcw_cad_reconstruction
+    assert state.perimeter_clearance_mm == 0.0
     state.mode = "SELECTED"
     space = next(
         area.spaces.active for screen in bpy.data.screens for area in screen.areas

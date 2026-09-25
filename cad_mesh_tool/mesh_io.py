@@ -24,6 +24,7 @@ def fingerprint(obj):
     data=dict(v=[list(v.co) for v in obj.data.vertices],f=[list(p.vertices) for p in obj.data.polygons],
               n=[list(n.vector) for n in obj.data.corner_normals],matrix=[list(r) for r in obj.matrix_world],
               materials=[p.material_index for p in obj.data.polygons],
+              sharp_edges=[list(e.vertices) for e in obj.data.edges if e.use_edge_sharp],
               cad_role=[value.value for value in role.data] if role and role.domain=='FACE' and role.data_type=='INT' else None)
     return hashlib.sha256(json.dumps(data,separators=(',',':')).encode()).hexdigest()
 
@@ -34,11 +35,18 @@ def capture(obj,preserve_nonmanifold=False):
     problem=topology_problem(obj,preserve_nonmanifold=preserve_nonmanifold)
     if problem:raise ValueError(problem)
     obj.data.calc_loop_triangles();scale=bpy.context.scene.unit_settings.scale_length
-    m=np.array(obj.matrix_world,dtype=float);v=np.array([v.co[:] for v in obj.data.vertices]);n=np.array([n.vector[:] for n in obj.data.corner_normals])@np.linalg.inv(m[:3,:3]);n/=np.maximum(np.linalg.norm(n,axis=1)[:,None],1e-30)
+    from .geometry import face_normals
+    m=np.array(obj.matrix_world,dtype=float);v=np.array([v.co[:] for v in obj.data.vertices])
+    world=(v@m[:3,:3].T+m[:3,3])*scale
+    faces=[list(p.vertices) for p in obj.data.polygons]
+    # Authored split normals are not a geometric constraint for reconstruction.
+    geometric=face_normals(world,faces)
+    n=[normal.tolist() for normal,face in zip(geometric,faces) for _ in face]
     role=obj.data.attributes.get('cad_role')
-    return dict(name=obj.name,source_hash=fingerprint(obj),unit_scale=scale,vertices=((v@m[:3,:3].T+m[:3,3])*scale).tolist(),
-                faces=[list(p.vertices) for p in obj.data.polygons],triangles=[list(t.vertices) for t in obj.data.loop_triangles],
-                normals=n.tolist(),materials=[p.material_index for p in obj.data.polygons],matrix=m.tolist(),
+    return dict(name=obj.name,source_hash=fingerprint(obj),unit_scale=scale,vertices=world.tolist(),
+                faces=faces,triangles=[list(t.vertices) for t in obj.data.loop_triangles],
+                normals=n,sharp_edges=[list(sorted(e.vertices)) for e in obj.data.edges if e.use_edge_sharp],
+                materials=[p.material_index for p in obj.data.polygons],matrix=m.tolist(),
                 cad_roles=[ROLES[value.value] for value in role.data]
                 if role and role.domain=='FACE' and role.data_type=='INT' else None)
 
@@ -48,7 +56,9 @@ def make_mesh(candidate,name):
     mesh=bpy.data.meshes.new(name);mesh.from_pydata((np.array(candidate['vertices'])-origin).tolist(),[],candidate['faces']);mesh.update()
     if mesh.validate(verbose=False):bpy.data.meshes.remove(mesh);raise ValueError('Blender had to repair candidate mesh')
     for p,mat in zip(mesh.polygons,candidate['materials']):p.material_index=mat;p.use_smooth=True
-    mesh.normals_split_custom_set([n for face in candidate['normals'] for n in face])
+    sharp={tuple(edge) for edge in candidate.get('sharp_edges',[])}
+    for edge in mesh.edges:
+        edge.use_edge_sharp=tuple(sorted(edge.vertices)) in sharp
     role=mesh.attributes.new('cad_role','INT','FACE');role.data.foreach_set('value',[ROLES.index(r) for r in candidate['roles']])
     return mesh,origin
 
@@ -57,6 +67,7 @@ def cleanup(mesh):
     """Return a NEW mesh; retain validated checkpoint and its protected topology."""
     result=mesh.copy();result.name=mesh.name+'_Editable'
     before_edges={tuple(sorted(edge.vertices)) for edge in mesh.edges}
+    sharp_edges={tuple(sorted(edge.vertices)) for edge in mesh.edges if edge.use_edge_sharp}
     bm=bmesh.new();bm.from_mesh(result);bm.faces.ensure_lookup_table();bm.verts.ensure_lookup_table()
     role=bm.faces.layers.int.get('cad_role')
     if role is None:bm.free();bpy.data.meshes.remove(result);raise ValueError('Missing explicit role map')
@@ -112,6 +123,11 @@ def cleanup(mesh):
     missing=[k for k in protected if k not in new]
     if missing:
         bpy.data.meshes.remove(result);raise ValueError('Protected faces lost during cleanup: '+str(len(missing)))
+    result_edges={tuple(sorted(edge.vertices)):edge for edge in result.edges}
+    if not sharp_edges <= result_edges.keys():
+        bpy.data.meshes.remove(result);raise ValueError('Cleanup removed a protected sharp edge')
+    for edge_key in sharp_edges:
+        result_edges[edge_key].use_edge_sharp=True
     normals=[]
     for p in result.polygons:
         ns=old.get(key(p.vertices))

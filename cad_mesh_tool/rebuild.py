@@ -96,10 +96,15 @@ def cylinder_rims(cy,p):
     return result
 
 
-def choose_perimeter(hole,outer,obstacles,radius=None,center=None):
+def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clearance_m=0.0):
     attempts=[]
     center=hole.mean(0) if center is None else center
-    sizes=list(dict.fromkeys([max(radius+max(.002,.25*radius),.008),radius+max(.002,.25*radius),radius+max(.002,.125*radius),radius+.002,radius+.001,radius+.0005,radius+.00025])) if radius else [None]
+    if radius and preferred_clearance_m:
+        clearances=[preferred_clearance_m*factor for factor in (1.0, .75, .5, .25)]
+        clearances.extend(value for value in (.002, .001, .0005, .00025) if value<preferred_clearance_m)
+        sizes=list(dict.fromkeys(radius+value for value in sorted(clearances,reverse=True)))
+    else:
+        sizes=list(dict.fromkeys([max(radius+max(.002,.25*radius),.008),radius+max(.002,.25*radius),radius+max(.002,.125*radius),radius+.002,radius+.001,radius+.0005,radius+.00025])) if radius else [None]
     for size in sizes:
         for degree in [0,15,30,45,60,75]:
             a=math.radians(degree);rot=np.array([[math.cos(a),-math.sin(a)],[math.sin(a),math.cos(a)]])
@@ -160,9 +165,12 @@ def rim_aliases(ids, row, theta, full):
     return aliases
 
 
-def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve_segmentation=False):
+def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve_segmentation=False,
+                preferred_clearance_m=0.0):
     from .operations import normalize
     operations=normalize(operations)
+    if not math.isfinite(preferred_clearance_m) or preferred_clearance_m<0:
+        raise ValueError('Preferred clearance must be a finite non-negative distance')
     V=np.array(snapshot['vertices'],dtype=float);F=snapshot['faces'];vertices=V.tolist()
     normals=face_normals(V,F);ef,adj=adjacency(F)
     keep=np.ones(len(V),dtype=bool);changed=set();grids={};fullrings={};claimed=set();rim_alias={};rail_points={}
@@ -372,7 +380,8 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             if radius is not None and not operations['perimeter_loops']:
                 sq,attempts=None,[]
             else:
-                sq,attempts=sparse if sparse is not None else choose_perimeter(hole,outer,obstacles,radius,center)
+                sq,attempts=sparse if sparse is not None else choose_perimeter(
+                    hole,outer,obstacles,radius,center,preferred_clearance_m)
             if sq is None:
                 boundary_limited=radius is not None and (not operations['perimeter_loops'] or
                                  bool(attempts) and all(a.get('rejected')=='outer_boundary' for a in attempts))
@@ -409,6 +418,7 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             layouts.append(layout);ids_all=square+ring
             perimeters.append(dict(patch=gid,ids=square,hole=ring,attempts=attempts,
                                    kind='circular' if radius is not None else 'compound',
+                                   clearance_m=attempts[-1]['size']-radius if radius is not None else None,
                                    layout='straight_strips' if layout else 'triangulated',
                                    strips=[[ids_all[i] for i in f] for f in layout['strips']] if layout else []))
             processed.add(frozenset(old))
@@ -494,6 +504,20 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
     result=dict(vertices=[vertices[i] for i in used],faces=[[remap[i] for i in f] for f in outfaces],normals=outnormals,roles=roles,tags=tags,materials=materials,patches=patches,perimeters=perimeters,transitions=transitions,
                 source_to_candidate=[remap.get(i,-1) for i in range(len(V))],
                 candidate_to_source=[i if i<len(V) else -1 for i in used],review_features=review_features)
+    candidate_edges={tuple(sorted((a,b))) for face in result['faces']
+                     for a,b in zip(face,face[1:]+face[:1])}
+    result['sharp_edges']=[]
+    result['lost_sharp_edges']=[]
+    for a,b in snapshot.get('sharp_edges',[]):
+        mapped=(result['source_to_candidate'][a],result['source_to_candidate'][b])
+        if min(mapped)<0 or tuple(sorted(mapped)) not in candidate_edges:
+            result['lost_sharp_edges'].append([a,b])
+            nearby=sorted({vi for fi in ef.get(tuple(sorted((a,b))),[]) for vi in F[fi]})
+            review_features.append(dict(id=None,group='CAD_Review_SharpEdges',
+                                        source_vertices=nearby,
+                                        reason=f'Sharp edge between source vertices {a} and {b} was removed'))
+            continue
+        result['sharp_edges'].append(sorted(mapped))
     if protection is not None:
         result['preserved_nonmanifold_edges']=[
             [remap[vi] for vi in edge] for edge in protection['edges']]
