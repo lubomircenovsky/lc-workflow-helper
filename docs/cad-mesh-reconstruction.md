@@ -26,6 +26,14 @@ The Reconstruction Options use two-column toggle buttons; hover each for its ful
 
 **Retry** starts a new run. The default normal check uses Blender-topology roundtrip calibration. Advanced Manual Normal Limit accepts any positive finite angle in degrees after risk acknowledgement. Above 0.05 degrees, shading may visibly change. This overrides only the straight-wall corner-normal limit; topology, intersection, deviation, and other geometry checks remain enabled. A higher limit cannot guarantee success. The chosen value is stored in the run profile and report.
 
+## UV Preparation
+
+The collapsed **UV Preparation** tool is part of the CAD Mesh Reconstruction panel but does not require a CAD run. In Object Mode, select one or more editable mesh objects, set **New UV Map**, optionally adjust **Island Margin** and **Cut Angle (degrees)**, then use **Analyze** or **Generate UV**. Each object gets its own packed 0-1 UV map; existing UV maps, global mesh seams, topology and other attributes remain unchanged. The generated map becomes active for editing while the previous render UV remains the render default. Saving the `.blend` is always manual. Undo reverts the batch.
+
+The geometry planner cuts strong folds and material boundaries, retains smoother bends in larger islands, and gives isolated annular walls a short lengthwise slit. Neither existing seams nor `cad_role` decide the cuts; manually edited CAD outputs and ordinary mesh objects use the same rules. Blender unwrap and packing run on a temporary independent mesh with only the planned working seams. UV-selection synchronization is enabled only during that working step and then restored. The UV values are copied back by verified polygon-loop order, not by nearest-point matching. Temporary objects and meshes are removed after success or failure. If a selected object shares its mesh datablock, the tool first makes that object's data single-user so unselected objects do not gain a UV map. A failed object gets no new UV map and does not stop the rest of the selection.
+
+This is a preparation pass, not a promise of an exact manual layout. Broad sheets usually stay continuous through smooth bends; complex branching folds, irregular cutouts and strong non-developable surfaces can require manual island edits. **Analyze** estimates geometric regions and cuts but cannot guarantee that Blender's unwrap will succeed. Every generated UV must have finite coordinates in 0-1 and nonzero face area. The separate existing UV-channel switch tool can rebuild global seams later if desired; this UV generator never does so automatically.
+
 ## Development notes
 
 ### Baseline and selectively retained fixes

@@ -56,6 +56,10 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     normal_override: BoolProperty(name="Manual Normal Limit", description="Override the calibrated corner-normal limit at your own risk", default=False)
     normal_limit_deg: FloatProperty(name="Normal Limit (degrees)", description="Positive finite angular tolerance; values over 0.05 degrees can visibly change shading", default=0.01, min=0.0, soft_max=0.05)
     normal_risk_ack: BoolProperty(name="I Accept Shading Risk", description="Required when manually overriding the normal limit", default=False)
+    uv_prep_map_name: StringProperty(name="New UV Map", description="Name for the new UV layer; an existing map is never overwritten", default="LCW_CAD_UV")
+    uv_prep_angle_degrees: FloatProperty(name="Cut Angle (degrees)", description="Cut folds sharper than this angle; smoother bends stay in one UV island", default=45.0, min=1.0, max=179.0)
+    uv_prep_margin: FloatProperty(name="Island Margin", description="UV-space margin between packed islands", default=0.005, min=0.0, max=0.1, precision=4)
+    uv_prep_summary: StringProperty(default="No UV preparation run yet.", options={"SKIP_SAVE"})
     results: CollectionProperty(type=LCW_PG_CADResult)
     active_result: IntProperty(default=0, min=0)
     bindings: CollectionProperty(type=LCW_PG_CADCollectionBinding)
@@ -76,6 +80,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     normal_section_open: BoolProperty(name="Advanced Normal Validation", default=False)
     run_section_open: BoolProperty(name="Run", default=True)
     results_section_open: BoolProperty(name="Results", default=True)
+    uv_prep_section_open: BoolProperty(name="UV Preparation", default=False)
 
 
 CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding,

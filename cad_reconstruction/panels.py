@@ -116,6 +116,21 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             if state.cleanup_running or state.cleanup_progress:
                 box.label(text=state.cleanup_progress, icon="FILE_FOLDER")
 
+        box = _section(layout, state, "uv_prep_section_open", "UV Preparation", "GROUP_UVS")
+        if box is not None:
+            box.label(text="Selected meshes; no CAD run required.", icon="INFO")
+            settings = box.column(align=True)
+            settings.enabled = not busy
+            settings.prop(state, "uv_prep_map_name")
+            settings.prop(state, "uv_prep_margin")
+            settings.prop(state, "uv_prep_angle_degrees")
+            actions = settings.row(align=True)
+            actions.operator("lcw.cad_analyze_uv", text="Analyze", icon="VIEWZOOM")
+            actions.operator("lcw.cad_prepare_uv", text="Generate UV", icon="GROUP_UVS")
+            box.label(text="Old UV maps and mesh seams stay unchanged.", icon="INFO")
+            for line in ui_text.lines(state.uv_prep_summary):
+                box.label(text=line)
+
         box = layout.box()
         box.label(text="Result Status Colors", icon="SHADING_SOLID")
         row = box.row(align=True)
