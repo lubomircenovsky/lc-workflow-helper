@@ -286,6 +286,7 @@ PANEL_ORDER_DEFAULT = (
     "mesh_utilities",
     "quad_reconstruction",
     "cad_reconstruction",
+    "gn_library",
     "workflow_presets",
     "kalibra_tools",
 )
@@ -301,6 +302,7 @@ PANEL_LABELS = {
     "mesh_utilities": "Object and Mesh Utilities",
     "quad_reconstruction": "Quad Reconstruction",
     "cad_reconstruction": "CAD Mesh Reconstruction",
+    "gn_library": "GN Library",
     "workflow_presets": "Workflow Presets",
     "kalibra_tools": "Kalibra Tools",
 }

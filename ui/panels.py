@@ -4,6 +4,7 @@ import bpy
 from bpy.app.handlers import persistent
 
 from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
+from ..operators.gn_library import supported_version
 from ..quad_reconstruction.panels import (
     LCW_PT_quad_reconstruction,
     LCW_UL_quad_analysis_results,
@@ -1508,6 +1509,32 @@ class LCW_PT_kalibra_tools(LCW_PT_base, bpy.types.Panel):
                 col.label(text="1.8", icon="CURVE_PATH")
 
 
+class LCW_PT_gn_library(LCW_PT_base, bpy.types.Panel):
+    bl_idname = "LCW_PT_gn_library"
+    bl_label = "GN Library"
+    bl_parent_id = "LCW_PT_root"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        box = layout.box()
+        box.label(text="GN_Screw_Replace_By_Geometry", icon="NODETREE")
+        if not supported_version():
+            box.label(text="Requires Blender 5.2 or newer", icon="INFO")
+            return
+
+        box.prop(context.window_manager.lcw_state, "gn_library_mode", text="")
+        row = box.row(align=True)
+        load = row.operator("lcw.gn_library_add", text="Load Group", icon="IMPORT")
+        load.action = "LOAD"
+        add_row = row.row(align=True)
+        add_row.enabled = context.active_object is not None
+        add = add_row.operator("lcw.gn_library_add", text="Add Modifier", icon="GEOMETRY_NODES")
+        add.action = "MODIFIER"
+        box.label(text="Set Source Collection and Replacement", icon="INFO")
+        box.label(text="Object in the modifier.")
+
+
 PANEL_CLASS_MAP = {
     "scene_info": LCW_PT_scene_info,
     "favorites": LCW_PT_favorites,
@@ -1519,6 +1546,7 @@ PANEL_CLASS_MAP = {
     "mesh_utilities": LCW_PT_mesh_utilities,
     "quad_reconstruction": LCW_PT_quad_reconstruction,
     "cad_reconstruction": LCW_PT_cad_reconstruction,
+    "gn_library": LCW_PT_gn_library,
     "workflow_presets": LCW_PT_workflow_presets,
     "kalibra_tools": LCW_PT_kalibra_tools,
 }
@@ -1537,6 +1565,7 @@ CLASSES = (
     LCW_PT_mesh_utilities,
     LCW_PT_quad_reconstruction,
     LCW_PT_cad_reconstruction,
+    LCW_PT_gn_library,
     LCW_PT_workflow_presets,
     LCW_PT_kalibra_tools,
 )

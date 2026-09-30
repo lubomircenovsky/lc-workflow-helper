@@ -52,6 +52,7 @@ $IncludePaths = @(
     "quad_reconstruction",
     "cad_mesh_tool",
     "cad_reconstruction",
+    "gn_library",
     "docs",
     "operators",
     "ui",

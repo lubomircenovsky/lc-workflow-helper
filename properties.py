@@ -960,6 +960,14 @@ class LCW_PG_SceneState(bpy.types.PropertyGroup):
 
 
 class LCW_PG_WindowState(bpy.types.PropertyGroup):
+    gn_library_mode: EnumProperty(
+        name="GN Library Mode",
+        items=(
+            ("REUSE", "Use Same Data", "Reuse the library group already loaded in this file"),
+            ("NEW", "New Instance", "Load an independent copy of the node groups"),
+        ),
+        default="REUSE",
+    )
     material_name: StringProperty(name="Material", default="cavity_bake_v2")
     face_material_name: StringProperty(name="Face Material", default="00_Config_wood_int")
     color_attribute_name: StringProperty(name="Color Attribute", default="Color")

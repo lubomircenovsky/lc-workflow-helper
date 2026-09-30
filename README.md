@@ -12,6 +12,7 @@ The add-on groups tools into practical N-panel categories:
 - `Workflow Presets`
 - `Kalibra Tools`
 - `Quad Reconstruction`
+- `GN Library`
 
 ## Current Scope
 
@@ -23,6 +24,9 @@ The extension provides:
 - color picker based vertex color tools using Blender 4.2 `color_attributes`
 - file path inputs instead of hardcoded export paths
 - deterministic batch quad reconstruction for triangulated and mixed meshes
+- bundled Geometry Nodes groups that can be appended to the current `.blend` file
+
+The GN Library initially includes `GN_Screw_Replace_By_Geometry`. Its asset requires Blender 5.2 or newer; the rest of the extension keeps its Blender 4.2 minimum. The source collection and replacement object are assigned in the Geometry Nodes modifier after insertion.
 
 ## Installation
 
