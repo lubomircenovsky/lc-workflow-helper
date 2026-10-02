@@ -179,7 +179,8 @@ class LCW_OT_cad_delete_run_files(bpy.types.Operator):
             self._deleted += 1
             for row in state.results:
                 try:
-                    if row.run_dir and Path(row.run_dir).resolve() == path.resolve():
+                    if ((row.run_dir and Path(row.run_dir).resolve() == path.resolve()) or
+                            (row.auto_run_dir and Path(row.auto_run_dir).resolve() == path.resolve())):
                         row.files_deleted = True
                 except (OSError, RuntimeError):
                     pass

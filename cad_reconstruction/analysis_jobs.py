@@ -30,6 +30,7 @@ class CADAnalysis:
         self.root = root
         state = self.scene.lcw_cad_reconstruction
         self.max_workers = min(state.concurrent_workers, 4)
+        self.timeout_seconds = jobs.worker_timeout_seconds(state)
         self.profile = dict(epsilon_m=state.epsilon_mm/1000, sample_count=750,
                             operations={name:bool(getattr(state,name)) for name in DEFAULTS},
                             preserve_curve_segmentation=state.preserve_curve_segmentation,
@@ -100,7 +101,8 @@ class CADAnalysis:
             process=subprocess.Popen([bpy.app.binary_path,'--background','--factory-startup','--python-exit-code','1',
                                       '--python',str(worker),'--',str(root)],stdout=log,stderr=subprocess.STDOUT,
                                      stdin=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
-            self.running[index]={'process':process,'log':log,'root':root,'hash':snapshot['source_hash']}
+            self.running[index]={'process':process,'log':log,'root':root,'hash':snapshot['source_hash'],
+                                 'started':time.perf_counter(), 'run_dir':root}
         except Exception as error:
             if log is not None:log.close()
             self._record(index,{'error':str(error)})
@@ -109,6 +111,8 @@ class CADAnalysis:
         job=self.running.pop(index)
         job['log'].close()
         try:
+            if job.get('timed_out'):
+                raise ValueError(f'Analysis exceeded the {self.timeout_seconds / 60:g} minute time limit')
             if fingerprint(self.objects[index])!=job['hash']:
                 raise ValueError('Source changed during analysis; analyze again before using recommendations')
             if job['process'].returncode:
@@ -121,6 +125,7 @@ class CADAnalysis:
 
     def step(self):
         if self.cancelled:return False
+        jobs.stop_expired_workers(self.running, self.timeout_seconds)
         for index,job in sorted(self.running.items()):
             if job['process'].poll() is not None:
                 self._finish(index)

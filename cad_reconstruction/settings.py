@@ -5,6 +5,9 @@ from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatPrope
 
 
 class LCW_PG_CADResult(bpy.types.PropertyGroup):
+    execution_mode: StringProperty(default="POWER_USER")
+    auto_run_dir: StringProperty(subtype="DIR_PATH")
+    strategy_summary: StringProperty()
     source: PointerProperty(type=bpy.types.Object)
     source_label: StringProperty()
     component_index: IntProperty(default=-1)
@@ -45,11 +48,19 @@ class LCW_PG_CADAnalysisLine(bpy.types.PropertyGroup):
 
 
 class LCW_PG_CADState(bpy.types.PropertyGroup):
+    workflow_mode: EnumProperty(name="Workflow", items=(("AUTO", "Auto", "Analyze and choose validated variants automatically"), ("POWER_USER", "Power user", "Choose reconstruction operations manually")), default="AUTO")
+    workflow_schema: IntProperty(default=0, options={"HIDDEN"})
+    auto_hole_detail_factor: FloatProperty(name="Hole Detail", default=1.0, min=0.1, max=2.0, precision=2)
+    auto_perimeter_clearance_mm: FloatProperty(name="Perimeter Clearance (mm)", description="Preferred clearance when Auto chooses a variant with support loops; 0 = automatic", default=0.0, min=0.0, precision=2)
+    auto_epsilon_mm: FloatProperty(name="Deviation Limit (mm)", default=0.4, min=0.000001)
+    auto_hole_epsilon_mm: FloatProperty(name="Hole Deviation (mm)", description="Independent hole tolerance; 0 uses the general limit", default=0.0, min=0.0, precision=3)
+    auto_run_settings_open: BoolProperty(name="Run Settings", default=False)
     mode: EnumProperty(name="Input", items=(("COLLECTION", "Collection", "Process a collection and its children"), ("SELECTED", "Selected Objects", "Process selected mesh objects")), default="COLLECTION")
     input_collection: PointerProperty(name="Input Collection", type=bpy.types.Collection)
     output_collection: PointerProperty(name="Output Collection", type=bpy.types.Collection)
     run_root: StringProperty(name="Run Folder", description="Where immutable worker inputs, results and reports are kept; // is relative to the .blend", subtype="DIR_PATH", default="//cad_mesh_runs")
     concurrent_workers: IntProperty(name="Concurrent Workers", description="Maximum separate Blender processes used for CAD objects; high values require more memory", default=4, min=1, max=16)
+    worker_timeout_minutes: FloatProperty(name="Max. Worker Time (min)", description="Maximum time for one worker process, including all Auto solids and variants; 0 disables the limit. Completed results are preserved", default=10.0, min=0.0, precision=1)
     epsilon_mm: FloatProperty(name="Deviation Limit (mm)", description="Maximum sampled shape deviation; not a guarantee of complete feature coverage", default=0.4, min=0.000001)
     straight_walls: BoolProperty(name="Merge Straight Walls", description="Merge validated straight wall patches without changing curved walls", default=True)
     circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce circular sheet-metal holes unless Keep Curve Segments is active", default=True)
@@ -99,6 +110,12 @@ CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding,
 
 def register_properties():
     bpy.types.Scene.lcw_cad_reconstruction = PointerProperty(type=LCW_PG_CADState)
+    if hasattr(bpy.data, 'scenes'):
+        migrate_workflows(None)
+    elif not bpy.app.timers.is_registered(_migrate_when_ready):
+        bpy.app.timers.register(_migrate_when_ready, first_interval=0.1)
+    if migrate_workflows not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(migrate_workflows)
     from . import analysis_jobs
     if analysis_jobs.cancel_active not in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.append(analysis_jobs.cancel_active)
@@ -111,7 +128,35 @@ def unregister_properties():
         jobs.ACTIVE_JOB.cancel()
         jobs.ACTIVE_JOB = None
     analysis_jobs.cancel_active()
+    if bpy.app.timers.is_registered(_migrate_when_ready):
+        bpy.app.timers.unregister(_migrate_when_ready)
+    if migrate_workflows in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(migrate_workflows)
     if analysis_jobs.cancel_active in bpy.app.handlers.load_pre:
         bpy.app.handlers.load_pre.remove(analysis_jobs.cancel_active)
     if hasattr(bpy.types.Scene, "lcw_cad_reconstruction"):
         del bpy.types.Scene.lcw_cad_reconstruction
+
+
+@bpy.app.handlers.persistent
+def migrate_workflows(_unused):
+    for scene in bpy.data.scenes:
+        state = scene.lcw_cad_reconstruction
+        # RNA storage is not necessarily exposed through scene.get() in newer
+        # Blender versions. Query the registered properties themselves.
+        legacy_fields = ('mode', 'input_collection', 'output_collection', 'run_root',
+                         'epsilon_mm', 'hole_detail_factor', 'hole_epsilon_mm',
+                         'perimeter_clearance_mm', 'circular_holes', 'perimeter_loops',
+                         'arcs', 'outer_cylinders', 'background_cleanup', 'straight_walls',
+                         'normal_override', 'separate_solids', 'preserve_curve_segmentation')
+        legacy = (not state.is_property_set('workflow_schema') and
+                  (any(state.is_property_set(name) for name in legacy_fields) or bool(state.results)))
+        if legacy and not state.is_property_set('workflow_mode'):
+            state.workflow_mode = 'POWER_USER'
+        state.workflow_schema = 1
+
+
+def _migrate_when_ready():
+    if not hasattr(bpy.data, 'scenes'):return 0.1
+    migrate_workflows(None)
+    return None

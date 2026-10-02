@@ -30,6 +30,10 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
         state = context.scene.lcw_cad_reconstruction
         running = jobs.ACTIVE_JOB is not None or state.analysis_running
         busy = running or state.cleanup_running
+        auto = state.workflow_mode == "AUTO"
+        switch = layout.row(align=True)
+        switch.enabled = not busy
+        switch.prop(state, "workflow_mode", expand=True)
 
         box = _section(layout, state, "input_section_open", "Input", "OUTLINER_COLLECTION")
         if box is not None:
@@ -38,89 +42,114 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             controls.prop(state, "mode", expand=True)
             if state.mode == "COLLECTION":
                 controls.prop(state, "input_collection")
-                controls.prop(state, "output_collection")
+                if not auto:controls.prop(state, "output_collection")
             else:
                 count = sum(obj.type == "MESH" for obj in context.selected_objects)
                 controls.label(text=f"Selected mesh objects: {count}", icon="OUTLINER_OB_MESH")
-            controls.prop(state, "run_root")
+            if not auto:controls.prop(state, "run_root")
 
-        box = _section(layout, state, "options_section_open", "Reconstruction Options", "MOD_REMESH")
-        if box is not None:
+        if auto:
+            box = layout.box()
             controls = box.column(align=True)
             controls.enabled = not busy
-            controls.prop(state, "epsilon_mm")
-            holes = controls.split(factor=0.5, align=True)
-            holes.prop(state, "circular_holes", text="Circular Holes", toggle=True)
-            field = holes.row(align=True)
-            field.enabled = state.circular_holes and not state.preserve_curve_segmentation
-            field.prop(state, "hole_detail_factor", text="Detail", slider=True)
-            deviation = controls.row(align=True)
-            deviation.enabled = state.circular_holes and not state.preserve_curve_segmentation
-            deviation.prop(state, "hole_epsilon_mm")
-            perimeter = controls.split(factor=0.5, align=True)
-            perimeter.prop(state, "perimeter_loops", text="Perimeter Loops", toggle=True)
-            field = perimeter.row(align=True)
-            field.enabled = state.perimeter_loops
-            field.prop(state, "perimeter_clearance_mm", text="Clearance (mm)")
-            for left, left_label, right, right_label in (
-                    ("arcs", "Arcs", "outer_cylinders", "Outer Cylinders"),
-                    ("background_cleanup", "Planar Cleanup", "straight_walls", "Straight Walls")):
-                row = controls.row(align=True)
-                row.prop(state, left, text=left_label, toggle=True)
-                row.prop(state, right, text=right_label, toggle=True)
-            controls.prop(state, "preserve_curve_segmentation", text="Keep Curve Segments", toggle=True)
-            controls.prop(state, "separate_solids", toggle=True)
-            advanced = _section(
-                controls, state, "normal_section_open", "Advanced Normal Validation", "ERROR"
-            )
-            if advanced is not None:
-                advanced.prop(state, "normal_override")
-                if state.normal_override:
-                    advanced.prop(state, "normal_limit_deg")
-                    advanced.label(text="Above 0.05 degrees may change shading.", icon="ERROR")
-                    advanced.label(text="Other geometry checks still apply.", icon="INFO")
-                    advanced.prop(state, "normal_risk_ack")
+            controls.prop(state, "auto_hole_detail_factor", slider=True)
+            controls.prop(state, "auto_perimeter_clearance_mm")
+            controls.prop(state, "auto_epsilon_mm")
+            controls.prop(state, "auto_hole_epsilon_mm")
+            for line in ui_text.lines("Auto chooses fewer polygons; support loops may be omitted."):
+                box.label(text=line, icon="INFO")
+        else:
+            box = _section(layout, state, "options_section_open", "Reconstruction Options", "MOD_REMESH")
+            if box is not None:
+                controls = box.column(align=True)
+                controls.enabled = not busy
+                controls.prop(state, "epsilon_mm")
+                holes = controls.split(factor=0.5, align=True)
+                holes.prop(state, "circular_holes", text="Circular Holes", toggle=True)
+                field = holes.row(align=True)
+                field.enabled = state.circular_holes and not state.preserve_curve_segmentation
+                field.prop(state, "hole_detail_factor", text="Detail", slider=True)
+                deviation = controls.row(align=True)
+                deviation.enabled = state.circular_holes and not state.preserve_curve_segmentation
+                deviation.prop(state, "hole_epsilon_mm")
+                perimeter = controls.split(factor=0.5, align=True)
+                perimeter.prop(state, "perimeter_loops", text="Perimeter Loops", toggle=True)
+                field = perimeter.row(align=True)
+                field.enabled = state.perimeter_loops
+                field.prop(state, "perimeter_clearance_mm", text="Clearance (mm)")
+                for left, left_label, right, right_label in (
+                        ("arcs", "Arcs", "outer_cylinders", "Outer Cylinders"),
+                        ("background_cleanup", "Planar Cleanup", "straight_walls", "Straight Walls")):
+                    row = controls.row(align=True)
+                    row.prop(state, left, text=left_label, toggle=True)
+                    row.prop(state, right, text=right_label, toggle=True)
+                controls.prop(state, "preserve_curve_segmentation", text="Keep Curve Segments", toggle=True)
+                controls.prop(state, "separate_solids", toggle=True)
+                advanced = _section(
+                    controls, state, "normal_section_open", "Advanced Normal Validation", "ERROR"
+                )
+                if advanced is not None:
+                    advanced.prop(state, "normal_override")
+                    if state.normal_override:
+                        advanced.prop(state, "normal_limit_deg")
+                        advanced.label(text="Above 0.05 degrees may change shading.", icon="ERROR")
+                        advanced.label(text="Other geometry checks still apply.", icon="INFO")
+                        advanced.prop(state, "normal_risk_ack")
 
         box = _section(layout, state, "run_section_open", "Run", "PLAY")
         if box is not None:
-            worker_row = box.row()
-            worker_row.enabled = not busy
-            worker_row.prop(state, "concurrent_workers")
-            if state.concurrent_workers >= 8:
-                box.label(text="8+ Blender processes can exhaust RAM.", icon="ERROR")
-            row = box.row(align=True)
-            row.enabled = not busy
-            row.operator("lcw.cad_analyze", text="Analyze", icon="VIEWZOOM")
-            row.operator("lcw.cad_reconstruct", text="Reconstruct", icon="MOD_REMESH")
-            box.label(text="Non-manifold junctions: automatic guarded mode.", icon="INFO")
-            if running:
-                box.operator("lcw.cad_cancel", icon="CANCEL")
-            analysis = box.box()
-            analysis.label(text="Last Analysis", icon="VIEWZOOM")
-            if state.analysis_running:
-                analysis.label(text="Checking geometry and screening profiles...", icon="TIME")
-            elif not state.analysis_ready:
-                analysis.label(text="Not checked yet. Select input, then Analyze.")
+            if auto:
+                advanced = _section(box, state, "auto_run_settings_open", "Run Settings", "PREFERENCES")
+                if advanced is not None:
+                    controls = advanced.column(align=True)
+                    controls.enabled = not busy
+                    controls.prop(state, "run_root")
+                    controls.prop(state, "concurrent_workers")
+                    controls.prop(state, "worker_timeout_minutes")
+                action = box.row()
+                action.enabled = not busy
+                action.operator("lcw.cad_reconstruct", text="Analyze & Reconstruct", icon="MOD_REMESH")
+                if running:box.operator("lcw.cad_cancel", icon="CANCEL")
             else:
-                mesh_label = "mesh" if state.analysis_meshes == 1 else "meshes"
-                analysis.label(text=f"{state.analysis_meshes} {mesh_label} | {state.analysis_blockers} blocked | "
-                                    f"{state.analysis_notes} notes",
-                               icon="ERROR" if state.analysis_blockers else "CHECKMARK")
-                count = len(state.analysis_lines)
-                visible = count if state.analysis_details_open else min(count, 3)
-                for index in range(visible):
-                    item = state.analysis_lines[index]
-                    for line in ui_text.lines(item.message):
-                        analysis.label(text=line, icon="ERROR" if item.severity == "BLOCKER" else "INFO")
-                    if item.recommendation:
-                        action = analysis.row()
-                        action.enabled = not busy
-                        action.operator("lcw.cad_apply_recommendation", text="Use Suggested Settings").analysis_index = index
-                    if item.run_dir and state.analysis_details_open:
-                        analysis.operator("lcw.cad_open_analysis", text="Analysis Files", icon="FILE_FOLDER").analysis_index = index
-                if count > 3:
-                    analysis.prop(state, "analysis_details_open", text="Show all notes" if not state.analysis_details_open
-                                  else "Hide extra notes", toggle=True)
+                worker_row = box.column(align=True)
+                worker_row.enabled = not busy
+                worker_row.prop(state, "concurrent_workers")
+                worker_row.prop(state, "worker_timeout_minutes")
+                if state.concurrent_workers >= 8:
+                    box.label(text="8+ Blender processes can exhaust RAM.", icon="ERROR")
+                row = box.row(align=True)
+                row.enabled = not busy
+                row.operator("lcw.cad_analyze", text="Analyze", icon="VIEWZOOM")
+                row.operator("lcw.cad_reconstruct", text="Reconstruct", icon="MOD_REMESH")
+                box.label(text="Non-manifold junctions: automatic guarded mode.", icon="INFO")
+                if running:
+                    box.operator("lcw.cad_cancel", icon="CANCEL")
+                analysis = box.box()
+                analysis.label(text="Last Analysis", icon="VIEWZOOM")
+                if state.analysis_running:
+                    analysis.label(text="Checking geometry and screening profiles...", icon="TIME")
+                elif not state.analysis_ready:
+                    analysis.label(text="Not checked yet. Select input, then Analyze.")
+                else:
+                    mesh_label = "mesh" if state.analysis_meshes == 1 else "meshes"
+                    analysis.label(text=f"{state.analysis_meshes} {mesh_label} | {state.analysis_blockers} blocked | "
+                                        f"{state.analysis_notes} notes",
+                                   icon="ERROR" if state.analysis_blockers else "CHECKMARK")
+                    count = len(state.analysis_lines)
+                    visible = count if state.analysis_details_open else min(count, 3)
+                    for index in range(visible):
+                        item = state.analysis_lines[index]
+                        for line in ui_text.lines(item.message):
+                            analysis.label(text=line, icon="ERROR" if item.severity == "BLOCKER" else "INFO")
+                        if item.recommendation:
+                            action = analysis.row()
+                            action.enabled = not busy
+                            action.operator("lcw.cad_apply_recommendation", text="Use Suggested Settings").analysis_index = index
+                        if item.run_dir and state.analysis_details_open:
+                            analysis.operator("lcw.cad_open_analysis", text="Analysis Files", icon="FILE_FOLDER").analysis_index = index
+                    if count > 3:
+                        analysis.prop(state, "analysis_details_open", text="Show all notes" if not state.analysis_details_open
+                                      else "Hide extra notes", toggle=True)
             progress = box.box()
             progress.label(text="Progress", icon="TIME")
             for part in state.progress.split(" | "):
@@ -177,6 +206,9 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                 result_box.label(text=line)
             if item.metrics_summary and item.status in {"PASS", "REVIEW"}:
                 for line in ui_text.lines(item.metrics_summary):
+                    result_box.label(text=line)
+            if item.strategy_summary:
+                for line in ui_text.lines(item.strategy_summary):
                     result_box.label(text=line)
             if not item.details_open:
                 continue

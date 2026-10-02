@@ -21,13 +21,13 @@ ACTIVE_JOB = None
 COLORS = {"PASS": (0.16, 0.72, 0.24, 1.0), "REVIEW": (0.95, 0.72, 0.08, 1.0)}
 
 
-def sources(context, state, retry_source=None):
+def sources(context, state, retry_source=None, auto=False):
     if retry_source is not None:
         objects = [retry_source]
     elif state.mode == "COLLECTION":
-        if state.input_collection is None or state.output_collection is None:
+        if state.input_collection is None or (state.output_collection is None and not auto):
             raise ValueError("Choose input and output collections")
-        if state.input_collection == state.output_collection or state.output_collection in state.input_collection.children_recursive:
+        if not auto and (state.input_collection == state.output_collection or state.output_collection in state.input_collection.children_recursive):
             raise ValueError("Output Collection must not be inside Input Collection")
         objects = list(state.input_collection.all_objects)
     else:
@@ -38,8 +38,19 @@ def sources(context, state, retry_source=None):
     return sorted(found.values(), key=lambda obj: (obj.name_full.casefold(), obj.as_pointer()))
 
 
+def worker_timeout_seconds(state):
+    minutes = state.worker_timeout_minutes
+    if not math.isfinite(minutes) or minutes < 0:
+        raise ValueError('Worker time limit must be non-negative and finite')
+    return minutes * 60
+
+
 def preflight_globals(context, state):
     problems = []
+    try:
+        worker_timeout_seconds(state)
+    except ValueError as exc:
+        problems.append(str(exc))
     try:
         normalize({name: bool(getattr(state, name)) for name in DEFAULTS})
     except ValueError as exc:
@@ -69,13 +80,13 @@ def guarded_strategy(obj, force=False):
     return bool(force or (obj.type == 'MESH' and source_topology(obj)['nonmanifold']))
 
 
-def preflight_object(obj, preserve_nonmanifold=None):
+def preflight_object(obj, preserve_nonmanifold=None, check_topology=True):
     problems = []
     if obj.modifiers:
         problems.append(f"{obj.name}: unapplied modifiers")
     if not obj.data.vertices or not obj.data.polygons:
         problems.append(f"{obj.name}: empty mesh")
-    else:
+    elif check_topology:
         try:
             if preserve_nonmanifold is None:
                 preserve_nonmanifold = guarded_strategy(obj)
@@ -140,6 +151,8 @@ def _destination(state, source, status, routing=None):
     mode = routing["mode"] if routing is not None else state.mode
     input_collection = routing["input"] if routing is not None else state.input_collection
     output_collection = routing["output"] if routing is not None else state.output_collection
+    if mode == 'AUTO':
+        return (_child(output_collection, status),)
     if mode == "SELECTED":
         return tuple(source.users_collection)
     for binding in state.bindings:
@@ -280,6 +293,7 @@ class CADBatch:
         self.root = root
         self.preserve_nonmanifold = preserve_nonmanifold
         self.max_workers = min(max(int(state.concurrent_workers), 1), 16)
+        self.timeout_seconds = worker_timeout_seconds(state)
         self.epsilon_mm = state.epsilon_mm
         self.options = {name: bool(getattr(state, name)) for name in DEFAULTS}
         self.preserve_curve_segmentation = bool(state.preserve_curve_segmentation)
@@ -409,6 +423,10 @@ class CADBatch:
         reason = (manifest.get("summary") or failure.get("message") or failure.get(
             "error", f"Worker exit code {exit_code}" if exit_code else ""))
         stage = manifest.get("review_stage") or failure.get("stage", "worker")
+        if job.get('timed_out'):
+            status = 'FAIL'
+            reason = f'Worker exceeded the {self.timeout_seconds / 60:g} minute time limit; other work items continue.'
+            stage = 'timeout'
         output = None
         try:
             if fingerprint(source) != job["source_hash"]:
@@ -465,6 +483,7 @@ class CADBatch:
         state = self.scene.lcw_cad_reconstruction
         if self.cancelled:
             return False
+        self._stop_expired_workers()
         for index, job in sorted(self.running.items()):
             if job["process"].poll() is not None:
                 self._finish_worker(index)
@@ -482,3 +501,22 @@ class CADBatch:
             return False
         self._progress()
         return True
+
+    def _stop_expired_workers(self):
+        stop_expired_workers(self.running, self.timeout_seconds)
+
+
+def stop_expired_workers(running, timeout_seconds):
+    if not timeout_seconds:return
+    for job in running.values():
+        process = job['process']
+        elapsed = time.perf_counter()-job['started']
+        if process.poll() is not None or elapsed < timeout_seconds:continue
+        process.terminate()
+        try:process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        job['timed_out'] = True
+        (job['run_dir']/'timeout.json').write_text(json.dumps(dict(
+            status='TIMED_OUT', limit_minutes=timeout_seconds/60, elapsed_seconds=elapsed)), encoding='utf8')

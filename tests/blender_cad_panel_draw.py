@@ -64,6 +64,7 @@ class Layout:
 addon.register()
 try:
     state = bpy.context.scene.lcw_cad_reconstruction
+    state.workflow_mode = "POWER_USER"
     icons = {item.identifier for item in bpy.types.UILayout.bl_rna.functions['operator'].parameters['icon'].enum_items}
     area = next(area for area in bpy.context.window.screen.areas if area.type == 'VIEW_3D')
     bpy.ops.mesh.primitive_cube_add()
@@ -93,7 +94,24 @@ try:
             factor_path = next(c[2] for c in calls if c[0:2] == ('prop', 'hole_detail_factor'))
             assert hole_path == factor_path[:-2], (hole_path, factor_path)
             assert any(c[0:2] == ('prop', 'hole_epsilon_mm') for c in calls)
+            assert any(c[0:2] == ('prop', 'worker_timeout_minutes') for c in calls)
             assert not any('Try Non-Manifold' in c[3].get('text', '') for c in calls)
+    state.workflow_mode='AUTO'
+    state.auto_run_settings_open=False
+    calls=[]
+    with bpy.context.temp_override(area=area):
+        LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(calls, icons)), bpy.context)
+    properties={c[1] for c in calls if c[0]=='prop'}
+    assert {'auto_hole_detail_factor','auto_epsilon_mm','auto_hole_epsilon_mm','auto_perimeter_clearance_mm'}<=properties
+    assert not {'hole_detail_factor','epsilon_mm','arcs','separate_solids','normal_override','output_collection','concurrent_workers'}&properties
+    assert not any(c[:2]==('operator','lcw.cad_analyze') for c in calls)
+    assert any(c[3].get('text')=='Analyze & Reconstruct' for c in calls)
+    assert 'worker_timeout_minutes' not in properties
+    state.auto_run_settings_open=True
+    calls=[]
+    with bpy.context.temp_override(area=area):
+        LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(calls, icons)), bpy.context)
+    assert any(c[0:2] == ('prop', 'worker_timeout_minutes') for c in calls)
     print('CAD_PANEL_DRAW_RNA_BRANCHES_OK')
 finally:
     addon.unregister()

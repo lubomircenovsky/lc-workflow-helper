@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import json
+import math
 import tempfile
 from pathlib import Path
 
@@ -153,20 +154,37 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
 
     def _start(self, context):
         state = context.scene.lcw_cad_reconstruction
+        auto = state.workflow_mode == 'AUTO'
         source = None
         retry_component = None
         if self.retry_index >= 0:
             if self.retry_index >= len(state.results):
                 raise ValueError("Retry result no longer exists")
             row = state.results[self.retry_index]
+            auto = row.execution_mode == 'AUTO'
             if row.status == "PASS" or row.source is None:
                 raise ValueError("Retry requires a failed source object")
             source = row.source
-            if state.separate_solids and row.component_index>=0:
+            if (auto or state.separate_solids) and row.component_index>=0:
                 retry_component=row.component_index
+            if auto and row.auto_run_dir:
+                from ..cad_mesh_tool.mesh_io import fingerprint
+                old_profile=json.loads((Path(row.auto_run_dir)/'profile.json').read_text(encoding='utf8'))
+                if fingerprint(source)!=old_profile['source_hash']:
+                    raise ValueError('Source changed since Auto partitioning; start a new reconstruction')
             if row.preserve_nonmanifold:
                 self.preserve_nonmanifold = True
-        objects = jobs.sources(context, state, source)
+        objects = jobs.sources(context, state, source, auto=auto)
+        if auto:
+            from . import auto_jobs
+            scale = context.scene.unit_settings.scale_length
+            if context.mode != 'OBJECT' or not math.isfinite(scale) or scale <= 0:
+                raise ValueError('Auto requires Object Mode and positive scene unit scale')
+            self._job=auto_jobs.AutoBatch(context,objects,auto_jobs.run_root(state),retry_component)
+            jobs.ACTIVE_JOB=self._job
+            state.running=True
+            state.progress=f'Queued {len(objects)} Auto source object(s)'
+            return
         issues = jobs.preflight_globals(context, state)
         if issues:
             raise ValueError("Preflight: " + "; ".join(issues[:3]))
@@ -186,7 +204,7 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
             self.preserve_nonmanifold = True
         if state.concurrent_workers >= 8:
             return context.window_manager.invoke_props_dialog(self, width=420)
-        if state.normal_override:
+        if state.workflow_mode == 'POWER_USER' and state.normal_override:
             return context.window_manager.invoke_confirm(self, event)
         return self.execute(context)
 

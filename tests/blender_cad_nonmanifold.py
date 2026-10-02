@@ -133,6 +133,7 @@ try:
     bad = source_mesh(1)
     source_hashes = {obj.name: fingerprint(obj) for obj in (good, bad)}
     state = bpy.context.scene.lcw_cad_reconstruction
+    state.workflow_mode = "POWER_USER"
     state.mode = 'SELECTED'
     for name, enabled in operations.items():
         setattr(state, name, enabled)

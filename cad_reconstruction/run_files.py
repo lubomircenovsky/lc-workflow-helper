@@ -40,7 +40,8 @@ def is_owned_run(root, path):
         return False
     source_hash = profile.get("source_hash")
     return ((profile.get("method"), profile.get("delivery")) in {
-                ("A", "EDITABLE_NGONS"), ("CAD_ANALYSIS", "CAD_INPUT_ANALYSIS")}
+                ("A", "EDITABLE_NGONS"), ("CAD_ANALYSIS", "CAD_INPUT_ANALYSIS"),
+                ("CAD_AUTO", "CAD_AUTO_VARIANTS")}
             and isinstance(profile.get("code_hash"), str)
             and re.fullmatch(r"[0-9a-f]{64}", profile["code_hash"]) is not None
             and isinstance(source_hash, str)
