@@ -29,11 +29,11 @@ def fingerprint(obj):
     return hashlib.sha256(json.dumps(data,separators=(',',':')).encode()).hexdigest()
 
 
-def capture(obj,preserve_nonmanifold=False):
+def capture(obj,preserve_nonmanifold=False,check_topology=True):
     if obj.type!='MESH' or obj.modifiers:raise ValueError('Requires a mesh without unevaluated modifiers')
     if bpy.context.mode!='OBJECT':raise ValueError('Object mode required')
     problem=topology_problem(obj,preserve_nonmanifold=preserve_nonmanifold)
-    if problem:raise ValueError(problem)
+    if problem and check_topology:raise ValueError(problem)
     obj.data.calc_loop_triangles();scale=bpy.context.scene.unit_settings.scale_length
     from .geometry import face_normals
     m=np.array(obj.matrix_world,dtype=float);v=np.array([v.co[:] for v in obj.data.vertices])
@@ -42,9 +42,44 @@ def capture(obj,preserve_nonmanifold=False):
     # Authored split normals are not a geometric constraint for reconstruction.
     geometric=face_normals(world,faces)
     n=[normal.tolist() for normal,face in zip(geometric,faces) for _ in face]
+    triangles=[list(t.vertices) for t in obj.data.loop_triangles]
+    triangle_polygons=[t.polygon_index for t in obj.data.loop_triangles]
+    bad=set()
+    for tri,fi in zip(triangles,triangle_polygons):
+        if len(faces[fi])<=4:continue
+        cross=np.cross(world[tri[1]]-world[tri[0]],world[tri[2]]-world[tri[0]])
+        if cross@geometric[fi]<=max(2e-16,.99*np.linalg.norm(cross)):
+            bad.add(fi)
+    repaired={}
+    if bad:
+        from .geometry import basis,topology
+        from .rebuild import tessellation,orient
+        for fi in sorted(bad):
+            ids=faces[fi];points=world[ids]-world[ids].mean(0);normal=geometric[fi]
+            if np.max(abs(points@normal))>1e-6:continue
+            uv=(points@basis(normal).T)[:,:2]
+            _,local=tessellation([uv])
+            replacement=[[ids[i] for i in (face if orient(*uv[face])>0 else face[::-1])]
+                         for face in local]
+            # Change only the read-only surface triangulation. Preserve the
+            # polygon's vertices, position, exact boundary and source hash.
+            def boundary(fs):
+                from collections import Counter
+                counts=Counter(tuple(sorted((a,b))) for f in fs for a,b in zip(f,f[1:]+f[:1]))
+                return {edge for edge,count in counts.items() if count==1}
+            if (boundary(replacement)!=boundary([ids]) or topology(replacement)['nonmanifold'] or
+                    any(np.cross(world[t[1]]-world[t[0]],world[t[2]]-world[t[0]])@normal<=2e-16
+                        for t in replacement)):
+                raise ValueError('Invalid source n-gon triangulation')
+            repaired[fi]=replacement
+        if repaired:
+            kept=[(tri,fi) for tri,fi in zip(triangles,triangle_polygons) if fi not in repaired]
+            kept.extend((tri,fi) for fi,ts in repaired.items() for tri in ts)
+            triangles=[tri for tri,fi in kept];triangle_polygons=[fi for tri,fi in kept]
     role=obj.data.attributes.get('cad_role')
     return dict(name=obj.name,source_hash=fingerprint(obj),unit_scale=scale,vertices=world.tolist(),
-                faces=faces,triangles=[list(t.vertices) for t in obj.data.loop_triangles],
+                faces=faces,triangles=triangles,triangle_polygons=triangle_polygons,
+                source_triangulation_repaired_faces=sorted(repaired),
                 normals=n,sharp_edges=[list(sorted(e.vertices)) for e in obj.data.edges if e.use_edge_sharp],
                 materials=[p.material_index for p in obj.data.polygons],matrix=m.tolist(),
                 cad_roles=[ROLES[value.value] for value in role.data]

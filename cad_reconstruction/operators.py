@@ -1,49 +1,129 @@
 from __future__ import annotations
 
 import time
+import json
+import tempfile
 from pathlib import Path
 
 import bpy
 from bpy.props import BoolProperty, IntProperty
 
-from . import jobs, status_overlay, ui_text
+from . import jobs, status_overlay, ui_text, analysis_jobs
 
 
 class LCW_OT_cad_analyze(bpy.types.Operator):
     bl_idname = "lcw.cad_analyze"
     bl_label = "Analyze CAD Inputs"
-    bl_description = "Check source eligibility without reconstructing geometry"
+    bl_description = "Check topology, source intersections and hole detail; screen operation profiles in external workers without modifying source meshes"
     bl_options = {"REGISTER"}
+
+    _timer = None
+    _job = None
+
+    @classmethod
+    def poll(cls, context):
+        return (context.scene is not None and context.mode=='OBJECT' and jobs.ACTIVE_JOB is None
+                and analysis_jobs.ACTIVE_ANALYSIS is None and not context.scene.lcw_cad_reconstruction.cleanup_running)
 
     def execute(self, context):
         state = context.scene.lcw_cad_reconstruction
-        state.analysis_lines.clear()
         try:
             objects = jobs.sources(context, state)
-            issues = jobs.preflight(context, state, objects)
-            notes = jobs.analyze_risks(objects)
+            issues = jobs.preflight_globals(context,state)
+            if issues:raise ValueError('; '.join(issues))
+            root=(Path(tempfile.gettempdir())/'lcw_cad_analysis' if state.run_root.startswith('//') and not bpy.data.filepath
+                  else jobs.run_root(state))
+            root.mkdir(parents=True,exist_ok=True)
         except Exception as exc:
-            objects, issues, notes = [], [str(exc)], []
             self.report({"ERROR"}, ui_text.analysis_issue(str(exc)))
-        for severity, messages, shortener in (
-                ("BLOCKER", issues, ui_text.analysis_issue),
-                ("NOTE", notes, ui_text.analysis_note)):
-            for message in messages:
-                line = state.analysis_lines.add()
-                line.severity = severity
-                line.message = shortener(message)
-                line.technical = message
-        state.analysis_ready = True
-        state.analysis_meshes = len(objects)
-        state.analysis_blockers = len(issues)
-        state.analysis_notes = len(notes)
-        mesh_label = "mesh" if len(objects) == 1 else "meshes"
-        state.analysis_summary = (f"{len(objects)} {mesh_label} | {len(issues)} blocked | "
-                                  f"{len(notes)} notes")
-        if not objects:
             return {"CANCELLED"}
-        self.report({"WARNING"} if issues or notes else {"INFO"}, state.analysis_summary)
-        return {"FINISHED"}
+        state.analysis_lines.clear()
+        state.analysis_ready=False
+        state.analysis_running=True
+        self._job=analysis_jobs.CADAnalysis(context,objects,root)
+        analysis_jobs.ACTIVE_ANALYSIS=self._job
+        if bpy.app.background:
+            try:
+                while self._job.step():time.sleep(.05)
+            except Exception:
+                self._job.cancel()
+                raise
+            finally:self._finish(context)
+            return {'FINISHED'}
+        self._timer=context.window_manager.event_timer_add(.3,window=context.window)
+        context.window_manager.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self,context,event):
+        if event.type=='ESC':self._job.cancel()
+        if event.type!='TIMER':return {'PASS_THROUGH'}
+        try:active=self._job.step()
+        except Exception as error:
+            self._job.cancel()
+            self.report({'ERROR'},f'CAD analysis stopped: {error}')
+            active=False
+        if active:return {'RUNNING_MODAL'}
+        self._finish(context)
+        return {'CANCELLED'} if self._job.cancelled else {'FINISHED'}
+
+    def _finish(self,context):
+        self._job.scene.lcw_cad_reconstruction.analysis_running=False
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer=None
+        analysis_jobs.ACTIVE_ANALYSIS=None
+
+
+class LCW_OT_cad_apply_recommendation(bpy.types.Operator):
+    bl_idname='lcw.cad_apply_recommendation'
+    bl_label='Use Suggested CAD Settings'
+    bl_description='Apply this object\'s screened options to the shared controls; input selection stays unchanged'
+    bl_options={'REGISTER','UNDO'}
+    analysis_index: IntProperty(default=0,min=0)
+
+    @classmethod
+    def poll(cls,context):
+        return (context.scene is not None and jobs.ACTIVE_JOB is None
+                and analysis_jobs.ACTIVE_ANALYSIS is None and not context.scene.lcw_cad_reconstruction.cleanup_running)
+
+    def execute(self,context):
+        state=context.scene.lcw_cad_reconstruction
+        if self.analysis_index>=len(state.analysis_lines):return {'CANCELLED'}
+        row=state.analysis_lines[self.analysis_index]
+        from ..cad_mesh_tool.mesh_io import fingerprint
+        if row.source is None or fingerprint(row.source)!=row.source_hash:
+            self.report({'ERROR'},'Source changed; analyze again before applying recommendations')
+            return {'CANCELLED'}
+        try:
+            options=json.loads(row.recommendation)
+            from ..cad_mesh_tool.operations import DEFAULTS
+            allowed=set(DEFAULTS)|{'separate_solids','preserve_curve_segmentation'}
+            if not isinstance(options,dict) or any(k not in allowed or not isinstance(v,bool) for k,v in options.items()):
+                raise ValueError('Invalid recommended settings')
+            for key,value in options.items():setattr(state,key,value)
+        except (ValueError,TypeError) as error:
+            self.report({'ERROR'},str(error))
+            return {'CANCELLED'}
+        self.report({'INFO'},f'Applied shared options suggested for {row.source.name}; select that source to run them')
+        return {'FINISHED'}
+
+
+class LCW_OT_cad_open_analysis(bpy.types.Operator):
+    bl_idname = 'lcw.cad_open_analysis'
+    bl_label = 'Open CAD Analysis Files'
+    bl_description = 'Open source intersection pairs, screened profile checks and the analysis report'
+    analysis_index: IntProperty(default=0, min=0)
+
+    def execute(self, context):
+        rows = context.scene.lcw_cad_reconstruction.analysis_lines
+        if self.analysis_index >= len(rows):
+            return {'CANCELLED'}
+        path = Path(rows[self.analysis_index].run_dir)
+        if not rows[self.analysis_index].run_dir or not path.is_dir():
+            self.report({'WARNING'}, 'Analysis files no longer exist')
+            return {'CANCELLED'}
+        bpy.ops.wm.path_open(filepath=str(path))
+        return {'FINISHED'}
 
 
 class LCW_OT_cad_reconstruct(bpy.types.Operator):
@@ -61,6 +141,7 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
     def poll(cls, context):
         return (context.scene is not None and context.mode == "OBJECT"
                 and jobs.ACTIVE_JOB is None
+                and analysis_jobs.ACTIVE_ANALYSIS is None
                 and not context.scene.lcw_cad_reconstruction.cleanup_running)
 
     @classmethod
@@ -73,6 +154,7 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
     def _start(self, context):
         state = context.scene.lcw_cad_reconstruction
         source = None
+        retry_component = None
         if self.retry_index >= 0:
             if self.retry_index >= len(state.results):
                 raise ValueError("Retry result no longer exists")
@@ -80,27 +162,29 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
             if row.status == "PASS" or row.source is None:
                 raise ValueError("Retry requires a failed source object")
             source = row.source
+            if state.separate_solids and row.component_index>=0:
+                retry_component=row.component_index
             if row.preserve_nonmanifold:
                 self.preserve_nonmanifold = True
         objects = jobs.sources(context, state, source)
         issues = jobs.preflight_globals(context, state)
         if issues:
             raise ValueError("Preflight: " + "; ".join(issues[:3]))
-        object_issues = [jobs.preflight_object(obj, self.preserve_nonmanifold)
+        object_issues = [jobs.preflight_object(obj, jobs.guarded_strategy(obj,self.preserve_nonmanifold))
                          for obj in objects]
         root = jobs.run_root(state)
         self._job = jobs.CADBatch(context, objects, root,
                                   preserve_nonmanifold=self.preserve_nonmanifold,
-                                  object_issues=object_issues)
+                                  object_issues=object_issues,retry_component=retry_component)
         jobs.ACTIVE_JOB = self._job
         state.running = True
-        state.progress = f"Queued {len(objects)} mesh(es)"
+        state.progress = f"Queued {len(self._job.objects)} CAD work item(s)"
 
     def invoke(self, context, event):
         state = context.scene.lcw_cad_reconstruction
         if 0 <= self.retry_index < len(state.results) and state.results[self.retry_index].preserve_nonmanifold:
             self.preserve_nonmanifold = True
-        if self.preserve_nonmanifold or state.concurrent_workers >= 8:
+        if state.concurrent_workers >= 8:
             return context.window_manager.invoke_props_dialog(self, width=420)
         if state.normal_override:
             return context.window_manager.invoke_confirm(self, event)
@@ -127,6 +211,9 @@ class LCW_OT_cad_reconstruct(bpy.types.Operator):
             try:
                 while self._job.step():
                     time.sleep(0.05)
+            except Exception:
+                self._job.cancel()
+                raise
             finally:
                 self._finish(context)
             return {"FINISHED"}
@@ -166,10 +253,11 @@ class LCW_OT_cad_cancel(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return jobs.ACTIVE_JOB is not None
+        return jobs.ACTIVE_JOB is not None or analysis_jobs.ACTIVE_ANALYSIS is not None
 
     def execute(self, context):
-        jobs.ACTIVE_JOB.cancel()
+        if jobs.ACTIVE_JOB is not None:jobs.ACTIVE_JOB.cancel()
+        if analysis_jobs.ACTIVE_ANALYSIS is not None:analysis_jobs.ACTIVE_ANALYSIS.cancel()
         return {"FINISHED"}
 
 
@@ -247,6 +335,8 @@ class LCW_OT_cad_open_run(bpy.types.Operator):
 
 CLASSES = (
     LCW_OT_cad_analyze,
+    LCW_OT_cad_apply_recommendation,
+    LCW_OT_cad_open_analysis,
     LCW_OT_cad_reconstruct,
     LCW_OT_cad_cancel,
     LCW_OT_cad_select_source,

@@ -47,8 +47,45 @@ def map_perimeters(perimeters, remap):
     return mapped
 
 
-def validated_candidate(source, features, operations, profile, protection=None, timings=None):
+def validated_candidate(source, features, operations, profile, protection=None, timings=None,
+                        validation_source=None):
     if timings is None:timings={}
+    from cad_mesh_tool.segment_backoff import relax_near_distance_failure
+    features=[dict(feature) for feature in features]
+    backoffs=[]
+    passes=[]
+    timings['segment_attempts']=passes
+    for retry in range(4):
+        detail={}
+        try:
+            result=_validated_candidate_once(source,features,operations,profile,protection,detail,
+                                             validation_source=validation_source)
+        except ValueError as error:
+            validation=getattr(error,'candidate_validation',None)
+            changes=[]
+            if validation is not None and retry<3 and not profile.get('preserve_curve_segmentation'):
+                changes=relax_near_distance_failure(source,features,validation)
+            detail['error']=str(error)
+            detail['segment_backoff']=changes
+            if validation is not None:
+                detail['failed_checks']=[key for key,value in validation['checks'].items() if not value]
+                detail['distance']=validation['distance']
+            backoffs.extend(changes)
+            if not changes:raise
+        else:
+            candidate=result[0]
+            candidate['segment_backoffs']=backoffs
+            candidate['actual_feature_segments']=[dict(id=f['id'],before=f['segments_before'],actual=f['segments'])
+                                                   for f in features if f.get('decision')=='REBUILD']
+            return result
+        finally:
+            passes.append(detail)
+            for key,value in detail.items():
+                if key.endswith('_seconds'):timings[key]=timings.get(key,0)+value
+
+
+def _validated_candidate_once(source, features, operations, profile, protection, timings,
+                              validation_source=None):
     phase=time.perf_counter()
     candidate=reconstruct(source, features, operations, protection=protection,
                           preserve_curve_segmentation=profile.get('preserve_curve_segmentation',False),
@@ -58,12 +95,15 @@ def validated_candidate(source, features, operations, profile, protection=None, 
     mesh,origin=make_mesh(candidate,'CAD_CheckpointMesh')
     timings['make_mesh_seconds']=time.perf_counter()-phase
     try:
-        validation=validate(source,mesh,origin,candidate['roles'],candidate['perimeters'],
+        validation=validate(validation_source if validation_source is not None else source,
+                            mesh,origin,candidate['roles'],candidate['perimeters'],
                             profile['epsilon_m'],profile['sample_count'],require_reduction=False,
                             protection=protection,source_to_output=candidate['source_to_candidate'],
-                            timings=timings)
+                            timings=timings,hole_deviation_regions=candidate.get('hole_deviation_regions',()))
         if not all(validation['checks'].values()):
-            raise ValueError('Checkpoint validation failed: '+str(validation['checks']))
+            error=ValueError('Checkpoint validation failed: '+str(validation['checks']))
+            error.candidate_validation=validation
+            raise error
         return candidate,mesh,origin,validation
     except Exception:
         bpy.data.meshes.remove(mesh)
@@ -113,8 +153,24 @@ def main(root,state=None):
     if profile['code_hash']!=code_hash():raise ValueError('Implementation changed since prepare_selected')
     if (root/'manifest.json').exists():raise FileExistsError('Completed run already exists')
     state['stage']='discover'
+    from cad_mesh_tool.intersections import intersections
+    source_vertices=np.asarray(source['vertices']);source_vertices-=source_vertices.mean(0)
+    print('CHECK_SOURCE intersections',flush=True)
+    source_intersections=intersections(source_vertices,np.asarray(source['triangles']))
+    write(root,'validation_source.json',source_intersections)
+    if source_intersections['intersections']:
+        state['stage']='source_geometry'
+        raise ValueError(f"Source geometry has {len(source_intersections['intersections'])} intersecting triangle pairs; inspect separate solids or repair the source before reconstruction")
+    original_source = source
+    state['stage'] = 'source_repair'
+    from cad_mesh_tool.source_repair import repair_collinear_faces
+    source, source_repair = repair_collinear_faces(source)
+    write(root,'source_repair.json',source_repair)
+    state['stage'] = 'discover'
     print('DISCOVER',flush=True)
-    discovery=discover(source['vertices'],source['faces'],profile['epsilon_m'])
+    discovery=discover(source['vertices'],source['faces'],profile['epsilon_m'],
+                       profile.get('hole_detail_factor',1.),
+                       (profile.get('hole_epsilon_mm',0.)/1000) or None)
     discover_seconds=time.time()-start
     protection=nonmanifold_protection(source,discovery['features']) if profile.get('preserve_nonmanifold') else None
     if protection is not None:
@@ -133,12 +189,18 @@ def main(root,state=None):
         attempts+=1
         print('RECONSTRUCTION_ATTEMPT',attempts,flush=True)
         timing=dict(attempt=attempts,kind='full')
+        timing['selected_features']=[f['id'] for f in features if f.get('decision') in {'REBUILD','PERIMETER_ONLY'}]
         started=time.perf_counter()
         try:
-            return validated_candidate(source,features,operations,profile,protection,timing)
+            return validated_candidate(source,features,operations,profile,protection,timing,
+                                       validation_source=original_source)
+        except Exception as error:
+            timing['error']=str(error)
+            raise
         finally:
             timing['total_seconds']=time.perf_counter()-started
             attempt_timings.append(timing)
+            write(root,'recovery_trace.json',attempt_timings)
     def dispose(result):
         bpy.data.meshes.remove(result[1])
     screening_profile=dict(profile,sample_count=min(profile['sample_count'],750))
@@ -147,12 +209,18 @@ def main(root,state=None):
         attempts+=1
         print('RECOVERY_SCREEN',attempts,flush=True)
         timing=dict(attempt=attempts,kind='screen')
+        timing['selected_features']=[f['id'] for f in features if f.get('decision') in {'REBUILD','PERIMETER_ONLY'}]
         started=time.perf_counter()
         try:
-            return validated_candidate(source,features,operations,screening_profile,protection,timing)
+            return validated_candidate(source,features,operations,screening_profile,protection,timing,
+                                       validation_source=original_source)
+        except Exception as error:
+            timing['error']=str(error)
+            raise
         finally:
             timing['total_seconds']=time.perf_counter()-started
             attempt_timings.append(timing)
+            write(root,'recovery_trace.json',attempt_timings)
     (candidate,mesh,origin,validation),skipped,recovery_attempts=recover(
         discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt,
         preserve_curve_segmentation=preserve_curve_segmentation)
@@ -184,11 +252,12 @@ def main(root,state=None):
         from cad_mesh_tool.mesh_io import ROLES
         proposed_roles=[ROLES[x.value] for x in proposed.attributes['cad_role'].data]
         proposed_perimeters=map_perimeters(candidate['perimeters'],proposed_remap)
-        checked=validate(source,proposed,origin,proposed_roles,proposed_perimeters,
+        checked=validate(original_source,proposed,origin,proposed_roles,proposed_perimeters,
                          profile['epsilon_m'],profile['sample_count'],require_reduction=False,
                          protection=protection,
                          source_to_output=[proposed_remap[i] if i>=0 else -1
-                             for i in candidate['source_to_candidate']])
+                             for i in candidate['source_to_candidate']],
+                         hole_deviation_regions=candidate.get('hole_deviation_regions',()))
         if not all(checked['checks'].values()):
             raise ValueError(f'{name} validation failed: {checked["checks"]}')
         return checked,proposed_perimeters
@@ -231,7 +300,11 @@ def main(root,state=None):
             validation_final=checked;final_perimeters=perimeters;wall_report=report
             write(root,'validation_straight_walls.json',checked)
         wall_report['elapsed_seconds']=time.perf_counter()-walls_started
-    if not changed_from_source(source,final,origin):
+    # An independent subset is already a new result relative to its parent.
+    # Keep clean partitioned solids even when no contour needed reconstruction.
+    separated_solid = (profile.get('component_index') is not None
+                       and bool(source.get('source_face_ids')))
+    if not separated_solid and not changed_from_source(original_source,final,origin):
         raise ValueError('No selected operation produced a validated geometry change')
     state.update(mesh=final,candidate_to_final=remap,stage='final_validated')
     write(root,'straight_walls.json',wall_report)
@@ -251,6 +324,7 @@ def main(root,state=None):
     lost_sharp_edges=validation_final['sharp_edge_errors']
     partial=bool(protection or skipped or stage_fallbacks or lost_sharp_edges)
     skipped_ids={item['feature'] for item in skipped}
+    actual_segments={item['id']:item['actual'] for item in candidate.get('actual_feature_segments',[])}
     rebuilt_count=sum(decisions([feature],operations,
                                 preserve_curve_segmentation=preserve_curve_segmentation)[0]['decision']=='REBUILD'
                       and feature['id'] not in skipped_ids for feature in discovery['features'])
@@ -258,7 +332,7 @@ def main(root,state=None):
                          if feature['id'] not in skipped_ids and
                          decisions([feature],operations,
                                    preserve_curve_segmentation=preserve_curve_segmentation)[0]['decision']=='REBUILD'
-                         and feature['segments']<feature['segments_before']]
+                         and actual_segments.get(feature['id'],feature['segments'])<feature['segments_before']]
     circular_skips=[item for item in skipped if next(
         (feature['category'] for feature in discovery['features'] if feature['id']==item['feature']),None)=='circular_hole']
     created_loops=sum(p.get('kind')=='circular' and p.get('layout')!='direct_join'
@@ -272,17 +346,25 @@ def main(root,state=None):
         perimeter_skipped=len(circular_skips) if operations['perimeter_loops'] else 0,
         perimeter_not_attempted=(sum('Recovery attempt limit' in item['reason'] for item in circular_skips)
                                  if operations['perimeter_loops'] else 0),
-        segments_reduced=sum(feature['segments_before']-feature['segments'] for feature in accepted_reductions),
+        segments_reduced=sum(feature['segments_before']-actual_segments.get(feature['id'],feature['segments']) for feature in accepted_reductions),
         curves_reduced=len(accepted_reductions),
         planar_edges_removed=cleanup_report['dissolved_edges'],
         ngons_before=sum(len(face)>4 for face in source['faces']),
         ngons_after=sum(len(face.vertices)>4 for face in final.polygons),
         locally_triangulated_ngons=cleanup_report.get('locally_triangulated_ngons',0))
     manifest=dict(geometry_status='PASS',coverage_status='REQUIRES_REVIEW',partial=partial,
+                  source_repair=source_repair,
+                  actual_feature_segments=candidate.get('actual_feature_segments',[]),
+                  segment_backoffs=candidate.get('segment_backoffs',[]),
+                  reversed_source_interface_faces=source.get('reversed_source_faces',[]),
                   preserved_source_nonmanifold=protection,
                   operations=operations,skipped_features=skipped,stage_fallbacks=stage_fallbacks,
                   preserve_curve_segmentation=preserve_curve_segmentation,
                   perimeter_clearance_mm=profile.get('perimeter_clearance_mm',0.0),
+                  hole_detail_factor=profile.get('hole_detail_factor',1.0),
+                  hole_epsilon_mm=profile.get('hole_epsilon_mm',0.0),
+                  hole_segment_targets=[dict(id=f['id'],before=f['segments_before'],target=f['segments'])
+                                        for f in discovery['features'] if f['category']=='circular_hole'],
                   circular_perimeter_clearances_mm=[p['clearance_m']*1000 for p in final_perimeters
                                                     if p.get('kind')=='circular' and p.get('clearance_m') is not None],
                   lost_sharp_edges=lost_sharp_edges,
@@ -330,6 +412,7 @@ def main(root,state=None):
            f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
            f"Preserve curve segmentation: {preserve_curve_segmentation}.",
            f"Preferred perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm (0 = automatic).",
+           f"Hole detail factor: {profile.get('hole_detail_factor',1.0):.2f}; hole deviation: {profile.get('hole_epsilon_mm',0.0):.3f} mm (0 = general limit).",
            f"Circular holes detected: {operation_results['circular_holes_detected']}.",
            f"Perimeter loops: {created_loops} created, {direct_joins} direct joins without a loop, "
            f"{operation_results['perimeter_skipped']} skipped ({operation_results['perimeter_not_attempted']} not attempted).",
@@ -348,6 +431,13 @@ def main(root,state=None):
         lines.append(f"Source vertex pairs (first 20): {lost_sharp_edges[:20]}.")
         if len(lost_sharp_edges)>20:
             lines.append(f"The remaining {len(lost_sharp_edges)-20} pairs are in validation_final.json.")
+    if source.get('reversed_source_faces'):
+        lines.append(f"Separate Solids: {len(source['reversed_source_faces'])} measured shared interface face(s) "
+                     'were oriented outward for this independent solid; the original object is unchanged.')
+    if source_repair['removed_zero_area_faces']:
+        lines.append(f"Source cleanup: {len(source_repair['removed_zero_area_faces'])} exact zero-area face(s) "
+                     'were removed by sewing existing collinear edge intervals, with no vertex movement. '
+                     'Validation compares against the original immutable input.')
     if manifest['skip_summary']:
         lines.append(f"Skipped cause: {manifest['skip_summary']}")
     if protection is not None:

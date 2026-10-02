@@ -10,6 +10,19 @@ from cad_reconstruction import run_files, ui_text
 
 
 class RunFileTests(unittest.TestCase):
+    def test_analysis_run_has_explicit_ownership_marker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            path=root/('a'*32)
+            path.mkdir()
+            profile=dict(method='CAD_ANALYSIS',delivery='CAD_INPUT_ANALYSIS',code_hash='b'*64,source_hash='c'*64)
+            (path/'source.json').write_text('{}',encoding='utf-8')
+            (path/'profile.json').write_text(json.dumps(profile),encoding='utf-8')
+            self.assertTrue(run_files.is_owned_run(root,path))
+            profile['delivery']='FOREIGN'
+            (path/'profile.json').write_text(json.dumps(profile),encoding='utf-8')
+            self.assertFalse(run_files.is_owned_run(root,path))
+
     def test_delete_only_verified_direct_child(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:
             base = Path(directory)

@@ -12,7 +12,8 @@ from pathlib import Path
 import bpy
 
 from ..cad_mesh_tool.api import apply_result, prepare_selected
-from ..cad_mesh_tool.mesh_io import fingerprint, topology_problem
+from ..cad_mesh_tool.mesh_io import fingerprint, topology_problem, source_topology
+from ..cad_mesh_tool.solids import solid_partitions
 from ..cad_mesh_tool.operations import DEFAULTS, normalize
 
 
@@ -52,6 +53,10 @@ def preflight_globals(context, state):
         problems.append("Deviation limit must be positive and finite")
     if not math.isfinite(state.perimeter_clearance_mm) or state.perimeter_clearance_mm < 0:
         problems.append("Perimeter clearance must be non-negative and finite")
+    if not math.isfinite(state.hole_epsilon_mm) or state.hole_epsilon_mm < 0:
+        problems.append("Hole deviation must be non-negative and finite")
+    if not math.isfinite(state.hole_detail_factor) or not .1 <= state.hole_detail_factor <= 2.:
+        problems.append("Hole detail factor must be between 0.1 and 2.0")
     if state.normal_override:
         if not state.normal_risk_ack:
             problems.append("Acknowledge shading risk for the manual normal limit")
@@ -60,7 +65,11 @@ def preflight_globals(context, state):
     return problems
 
 
-def preflight_object(obj, preserve_nonmanifold=False):
+def guarded_strategy(obj, force=False):
+    return bool(force or (obj.type == 'MESH' and source_topology(obj)['nonmanifold']))
+
+
+def preflight_object(obj, preserve_nonmanifold=None):
     problems = []
     if obj.modifiers:
         problems.append(f"{obj.name}: unapplied modifiers")
@@ -68,6 +77,8 @@ def preflight_object(obj, preserve_nonmanifold=False):
         problems.append(f"{obj.name}: empty mesh")
     else:
         try:
+            if preserve_nonmanifold is None:
+                preserve_nonmanifold = guarded_strategy(obj)
             if topology_issue := topology_problem(obj, preserve_nonmanifold=preserve_nonmanifold):
                 problems.append(topology_issue)
         except Exception as exc:
@@ -79,7 +90,7 @@ def preflight_object(obj, preserve_nonmanifold=False):
     return problems
 
 
-def preflight(context, state, objects, preserve_nonmanifold=False):
+def preflight(context, state, objects, preserve_nonmanifold=None):
     problems = preflight_globals(context, state)
     for obj in objects:
         problems.extend(preflight_object(obj, preserve_nonmanifold))
@@ -208,7 +219,8 @@ def _import_result(state, source, run_dir, status, routing=None):
         world = obj.matrix_world.copy()
         obj.parent = source.parent
         obj.matrix_world = world
-        obj.name = f"{source.name}_CAD_{status}"
+        solid = f"_Solid{obj['cad_component_index']+1:03d}" if 'cad_component_index' in obj else ''
+        obj.name = f"{source.name}{solid}_CAD_{status}"
         from . import status_overlay
 
         obj.color = status_overlay.base_color(source)
@@ -234,19 +246,46 @@ def _import_result(state, source, run_dir, status, routing=None):
 
 class CADBatch:
     def __init__(self, context, objects, root, preserve_nonmanifold=False,
-                 object_issues=None):
+                 object_issues=None,retry_component=None):
         self.scene = context.scene
-        self.objects = tuple(objects)
-        self.object_issues = tuple(tuple(issues) for issues in (
-            object_issues if object_issues is not None else (() for _ in objects)))
+        state = self.scene.lcw_cad_reconstruction
+        tasks = []
+        partition_hashes = {}
+        for index, obj in enumerate(objects):
+            groups = solid_partitions([list(p.vertices) for p in obj.data.polygons],
+                                      [list(v.co) for v in obj.data.vertices]) if state.separate_solids else []
+            if len(groups)>1:
+                partition_hashes[obj.as_pointer()] = fingerprint(obj)
+            # Keep source-level structural blockers; component topology is checked
+            # again on the immutable subset before its worker starts.
+            issues = tuple(object_issues[index]) if object_issues is not None else tuple(preflight_object(obj))
+            if retry_component is not None and (len(groups)<2 or retry_component>=len(groups)):
+                raise ValueError('Source solid partition changed; start a new reconstruction')
+            for solid_index, partition in enumerate(groups if len(groups)>1 else [None]):
+                if retry_component is not None and solid_index!=retry_component:continue
+                faces = partition['faces'] if partition is not None else None
+                reverse = partition['reversed_faces'] if partition is not None else []
+                tasks.append((obj, faces, solid_index if faces is not None else None, issues, reverse))
+        self.objects = tuple(task[0] for task in tasks)
+        self.component_faces = tuple(task[1] for task in tasks)
+        self.component_indices = tuple(task[2] for task in tasks)
+        self.object_issues = tuple(task[3] for task in tasks)
+        self.component_reversed_faces = tuple(task[4] for task in tasks)
+        self.partition_hashes = tuple(partition_hashes.get(obj.as_pointer()) for obj in self.objects)
+        from ..cad_mesh_tool.geometry import topology
+        self.guarded = tuple(bool(preserve_nonmanifold or (
+            topology([list(obj.data.polygons[fi].vertices) for fi in faces])['nonmanifold']
+            if faces is not None else source_topology(obj)['nonmanifold']))
+            for obj, faces in zip(self.objects,self.component_faces))
         self.root = root
         self.preserve_nonmanifold = preserve_nonmanifold
-        state = self.scene.lcw_cad_reconstruction
         self.max_workers = min(max(int(state.concurrent_workers), 1), 16)
         self.epsilon_mm = state.epsilon_mm
         self.options = {name: bool(getattr(state, name)) for name in DEFAULTS}
         self.preserve_curve_segmentation = bool(state.preserve_curve_segmentation)
         self.perimeter_clearance_mm = state.perimeter_clearance_mm
+        self.hole_detail_factor = state.hole_detail_factor
+        self.hole_epsilon_mm = state.hole_epsilon_mm
         self.straight_walls = {"enabled": state.straight_walls,
                                "normal_limit_deg": state.normal_limit_deg if state.normal_override else None}
         self.normal_limit_deg = state.normal_limit_deg if state.normal_override else 0.0
@@ -257,9 +296,13 @@ class CADBatch:
         self.running = {}
         self.cancelled = False
         self.row_offset = len(state.results)
-        for source in self.objects:
+        for index, source in enumerate(self.objects):
             row = state.results.add()
             row.source = source
+            solid_index = self.component_indices[index]
+            row.source_label = source.name + (f" / Solid {solid_index+1}" if solid_index is not None else '')
+            row.component_index = solid_index if solid_index is not None else -1
+            row.preserve_nonmanifold = self.guarded[index]
             row.status = "PENDING"
             row.stage = "Queued"
 
@@ -278,6 +321,8 @@ class CADBatch:
         for line in lines:
             if line.startswith("DISCOVER"):
                 job["phase"] = "Detecting features"
+            elif line.startswith("CHECK_SOURCE"):
+                job["phase"] = "Checking source intersections"
             elif line.startswith("RECOVERY_SCREEN"):
                 job["phase"] = f"Testing safe regions ({line.split()[-1].strip()})"
             elif line.startswith("RECONSTRUCTION_ATTEMPT"):
@@ -288,7 +333,7 @@ class CADBatch:
 
     def _progress(self):
         queued = len(self.objects) - self.next_index
-        phases = ", ".join(f"{self.objects[i].name}: {job['phase']}"
+        phases = ", ".join(f"{self._row(i).source_label}: {job['phase']}"
                            for i, job in sorted(self.running.items()))
         self.scene.lcw_cad_reconstruction.progress = (
             f"Queued {queued} | Running {len(self.running)} | Done {self.completed}"
@@ -308,11 +353,16 @@ class CADBatch:
             if self.object_issues[index]:
                 raise ValueError("; ".join(self.object_issues[index]))
             source_hash = fingerprint(source)
+            if self.partition_hashes[index] is not None and source_hash!=self.partition_hashes[index]:
+                raise ValueError('Source changed after solid partitioning; reconstruct again')
             prepare_selected(str(run_dir), epsilon_mm=self.epsilon_mm, obj=source,
                              straight_walls=self.straight_walls, operations=self.options,
-                             preserve_nonmanifold=self.preserve_nonmanifold,
+                             preserve_nonmanifold=self.guarded[index],
                              preserve_curve_segmentation=self.preserve_curve_segmentation,
-                             perimeter_clearance_mm=self.perimeter_clearance_mm)
+                             perimeter_clearance_mm=self.perimeter_clearance_mm,
+                             hole_detail_factor=self.hole_detail_factor,hole_epsilon_mm=self.hole_epsilon_mm,
+                             component_faces=self.component_faces[index],component_index=self.component_indices[index],
+                             component_reversed_faces=self.component_reversed_faces[index])
             worker = Path(__file__).resolve().parents[1] / "cad_mesh_tool" / "worker.py"
             command = [bpy.app.binary_path, "--background", "--factory-startup",
                        "--python-exit-code", "1", "--python", str(worker), "--", str(run_dir)]
@@ -329,7 +379,7 @@ class CADBatch:
                 log.close()
             stage = "preflight" if self.object_issues[index] else "prepare"
             _result_record(state, source, run_dir, "FAIL", str(exc), stage,
-                           preserve_nonmanifold=self.preserve_nonmanifold,
+                           preserve_nonmanifold=self.guarded[index],
                            row_index=self.row_offset + index,
                            normal_limit_deg=self.normal_limit_deg,
                            elapsed_seconds=time.perf_counter() - started)
@@ -374,7 +424,7 @@ class CADBatch:
             if self.routing["mode"] == "COLLECTION":
                 _destination(state, source, "FAIL", self.routing)
         _result_record(state, source, run_dir, status, reason, stage, output, manifest,
-                       preserve_nonmanifold=self.preserve_nonmanifold,
+                       preserve_nonmanifold=self.guarded[index],
                        row_index=self.row_offset + index,
                        normal_limit_deg=self.normal_limit_deg,
                        elapsed_seconds=time.perf_counter() - job["started"],
@@ -428,7 +478,7 @@ class CADBatch:
             self._progress()
             return True
         if not self.running and self.next_index >= len(self.objects):
-            state.progress = f"Complete: {len(self.objects)} source object(s)"
+            state.progress = f"Complete: {len(self.objects)} CAD work item(s)"
             return False
         self._progress()
         return True

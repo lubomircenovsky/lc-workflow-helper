@@ -74,7 +74,38 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
     reasons = {}
     screen_attempt = screen_attempt or attempt
     final_reserve = min(4, max(1, max_attempts // 8))
+    # Shared bends may only be valid together: screen their connected groups
+    # before the old single-feature search. Failed groups still fall back to
+    # individual trials; every accepted combination receives full validation.
+    by_id={f['id']:f for f in features}
+    pending=set(active)
+    groups=[]
+    while pending:
+        seed=min(pending);pending.remove(seed)
+        group={seed};stack=[seed]
+        while stack:
+            current=by_id[stack.pop()]
+            family=current['category']=='circular_hole'
+            vertices=set(current['vertices'])
+            neighbors={fid for fid in pending
+                       if (by_id[fid]['category']=='circular_hole')==family
+                       and vertices.intersection(by_id[fid]['vertices'])}
+            pending-=neighbors;group|=neighbors;stack.extend(sorted(neighbors))
+        if len(group)>1:groups.append(group)
+    # Spend at most a quarter of the search on joint transactions.
+    for group in groups[:max_attempts//4]:
+        if tries>=max_attempts-final_reserve:break
+        try:
+            tries+=1
+            result=screen_attempt(decisions(features,operations,accepted|group,reasons,
+                                           preserve_curve_segmentation))
+        except Exception as error:
+            if not is_geometric_conflict(error):raise
+        else:
+            accepted|=group
+            dispose(result)
     for feature_id in active:
+        if feature_id in accepted:continue
         if tries >= max_attempts - final_reserve:
             reasons[feature_id] = f'Recovery attempt limit ({max_attempts}) reached'
             continue

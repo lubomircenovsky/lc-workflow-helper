@@ -26,6 +26,7 @@ def cancel_active_cleanup():
 
 def _can_manage(context):
     return (context.scene is not None and jobs.ACTIVE_JOB is None
+            and not context.scene.lcw_cad_reconstruction.analysis_running
             and not context.scene.lcw_cad_reconstruction.cleanup_running)
 
 

@@ -39,9 +39,11 @@ def tessellation(boundaries):
     if any(len(ref)!=1 for ref in orig):raise ValueError('CDT created ambiguous/intersecting constraints')
     result=[]
     for f in ff:
-        p=np.array([vv[i][:] for i in f]);mid=p.mean(0)
+        # CDT coordinates are float32; classify using the original coordinates
+        # that will actually be emitted. Rounded centroids can cross a nearly
+        # collinear boundary and admit an exterior sliver triangle.
+        ids=[orig[i][0] for i in f];mid=points[ids].mean(0)
         if inside(mid,boundaries[0]) and not any(inside(mid,h) for h in boundaries[1:]):
-            ids=[orig[i][0] for i in f]
             if abs(orient(*points[ids]))<1e-16:continue
             result.append(ids)
     return points,result
@@ -79,6 +81,24 @@ def cylinder_rims(cy,p):
             if any(len(graph[i])>2 for i in comp):raise ValueError('Branching cylinder end contour')
             rings.append(sorted(comp,key=lambda i:angle[i]))
         rings=[r for r in rings if len(r)>=3]
+        if len(rings)!=2:
+            # Trimmed cuts can end a rail inside the fitted angular interval.
+            # Its measured axial edges still separate two simple end chains.
+            graph={}
+            for a,b in cy['boundary']:
+                axial=abs(p[a,2]-p[b,2]);radial=float(np.linalg.norm(p[a,:2]-p[b,:2]))
+                if axial>max(1e-12,radial*10):continue
+                graph.setdefault(a,set()).add(b);graph.setdefault(b,set()).add(a)
+            pending=set(graph);measured=[]
+            while pending:
+                comp={min(pending)};stack=list(comp);pending-=comp
+                while stack:
+                    fresh=graph[stack.pop()]&pending;comp|=fresh;pending-=fresh;stack.extend(fresh)
+                measured.append(comp)
+            if (len(measured)==2 and all(len(r)>=3 and
+                    sum(len(graph[i])==1 for i in r)==2 and
+                    all(len(graph[i])<=2 for i in r) for r in measured)):
+                rings=[sorted(r,key=lambda i:angle[i]) for r in measured]
         if len(rings)!=2:
             constant=[[i for i in bd if abs(p[i,2]-level)<1e-6] for level in (cy['lo'],cy['hi'])]
             if all(len(r)>=3 and min(angle[i] for i in r)<angular_tolerance and abs(max(angle[i] for i in r)-cy['span'])<angular_tolerance for r in constant):rings=constant
@@ -124,6 +144,48 @@ def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clea
                 q=annulus_quality(sq,hole)
                 attempts.append(dict(degree=degree,size=size,divisions=divisions,q=q))
                 if q<=20:return sq,attempts
+    if radius:
+        # A contour-following ring needs less room at rounded/narrow borders
+        # than a square. Keep the same clearance candidates and quality gate.
+        for size in sizes:
+            contour=center+(hole-center)*(size/radius)
+            reason=None
+            if not all(inside(p,outer) for p in contour) or contacts(contour,outer):reason='outer_boundary'
+            elif not all(inside(p,contour) for p in hole) or contacts(contour,hole):reason='does_not_enclose_hole'
+            elif any(contacts(contour,o) or any(inside(p,contour) for p in o) or inside(contour[0],o) for o in obstacles):reason='other_feature'
+            if reason:
+                attempts.append(dict(shape='contour',size=size,rejected=reason));continue
+            q=annulus_quality(contour,hole)
+            attempts.append(dict(shape='contour',size=size,q=q))
+            if q<=20:return contour,attempts
+    else:
+        # Offset an irregular cutout's measured contour. Reject folds, contacts
+        # and low-quality annuli through the same tests as square supports.
+        delta=np.roll(hole,-1,axis=0)-hole
+        lengths=np.linalg.norm(delta,axis=1)
+        if np.all(lengths>1e-12):
+            winding=1 if sum(orient(np.zeros(2),a,b) for a,b in zip(hole,np.roll(hole,-1,axis=0)))>0 else -1
+            normals=winding*np.column_stack((delta[:,1],-delta[:,0]))/lengths[:,None]
+            previous=np.roll(normals,1,axis=0)
+            denominator=1+np.sum(previous*normals,axis=1)
+            if np.all(denominator>1e-6):
+                offset=(previous+normals)/denominator[:,None]
+                for clearance in (.002,.0015,.001,.0005,.00025):
+                    contour=hole+clearance*offset
+                    reason=None
+                    if not all(inside(p,outer) for p in contour) or contacts(contour,outer):reason='outer_boundary'
+                    elif not all(inside(p,contour) for p in hole) or contacts(contour,hole):reason='does_not_enclose_hole'
+                    elif any(contacts(contour,o) or any(inside(p,contour) for p in o) or inside(contour[0],o) for o in obstacles):reason='other_feature'
+                    if reason:
+                        attempts.append(dict(shape='contour',clearance=clearance,rejected=reason));continue
+                    try:q=annulus_quality(contour,hole)
+                    except ValueError as error:
+                        if not str(error).startswith('CDT created ambiguous'):raise
+                        attempts.append(dict(shape='contour',clearance=clearance,rejected='invalid_contour'));continue
+                    if not math.isfinite(q):
+                        attempts.append(dict(shape='contour',clearance=clearance,rejected='annulus_topology'));continue
+                    attempts.append(dict(shape='contour',clearance=clearance,q=q))
+                    if q<=20:return contour,attempts
     return None,attempts
 
 
@@ -193,8 +255,9 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
         if claimed.intersection(cy['faces']):raise ValueError('Overlapping cylinder ownership')
         claimed.update(cy['faces'])
         frame=np.array(cy['frame']);origin=np.array(cy['origin']);p=(V-origin)@frame.T
-        c=np.array(cy['center']);n=cy['segments'];boundary=sorted({i for e in cy['boundary'] for i in e});rows=[];chosen=set();avoided_move=0.
+        c=np.array(cy['center']);n=cy['segments'];boundary=sorted({i for e in cy['boundary'] for i in e});rows=[];chosen=set();rim_vertices=set();avoided_move=0.
         for ids,end_normal,end_d in cylinder_rims(cy,p):
+            rim_vertices.update(ids)
             level=float(p[ids,2].mean())
             theta={i:float((math.atan2(p[i,1]-c[1],p[i,0]-c[0])-cy['start'])%(2*math.pi)) for i in ids}
             theta={i:0. if abs(a-2*math.pi)<1e-4 else a for i,a in theta.items()}
@@ -225,7 +288,9 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             if cy['full']:fullrings[frozenset(ids)]=(cy,row)
         # Intermediate rail vertices may connect long adjacent flat surfaces.
         # Keep their measured contour instead of contracting it to the caps.
-        rails=[i for i in boundary if i not in rim_alias and i not in chosen]
+        # A vertex may be a neighboring cylinder's rim and this cylinder's
+        # intermediate axial rail. Only this strip's rims classify its rails.
+        rails=[i for i in boundary if i not in rim_vertices and i not in chosen]
         rail_points[cy['id']]=rails;chosen.update(rails)
         for vi in cy['vertices']:
             if vi not in chosen:keep[vi]=False
@@ -235,7 +300,11 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
                                         reason='Original uneven rim samples retained to avoid large displacement',
                                         avoided_displacement_m=avoided_move,source_vertices=cy['vertices']))
     retained={i for rows in grids.values() for row in rows for i in row}
-    if any(not keep[i] for i in retained):raise ValueError('Shared retained/deleted vertex conflict')
+    conflicting={i for i in retained if not keep[i]}
+    if conflicting:
+        raise ValueError('Shared retained/deleted vertex conflict: '
+                         f'vertices={sorted(conflicting)}, features='+
+                         str([cy['id'] for cy in CY if conflicting.intersection(cy['vertices'])]))
     changed.update(np.flatnonzero(~keep).tolist())
     skipped=[feature for feature in features if feature.get('decision')=='SKIP']
     if skipped:
@@ -263,7 +332,7 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             fullrings[frozenset(ids)]=(cy,list(ids))
             perimeter_vertices.update(ids)
     claimed.update(protected_faces)
-    groups=planar_regions(V,F,normals,adj,claimed)
+    groups=planar_regions(V,F,normals,adj,claimed,stable_seeds=True)
     corners=np.array(snapshot['normals']);off=np.cumsum([0]+[len(f) for f in F])
     outfaces=[];outnormals=[];roles=[];tags=[];materials=[];patches=[];perimeters=[];transitions=[];split_edges={}
     def add(ids,ns,role,tag,mat=0):
@@ -346,16 +415,18 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
         for old,ring in hole_pairs:
             entry=fullrings.get(frozenset(old));affected=bool(entry) or any(set(old)&set(cy['vertices']) for cy in CY)
             if not affected:outside.append(ring);continue
-            hole=np.array([uv(i) for i in ring]);obstacles=[]
+            hole=np.array([uv(i) for i in ring]);obstacles=[];actual_obstacles=[]
             for other_old,other_ring in hole_pairs:
                 if other_ring is ring:continue
                 xy=np.array([uv(i) for i in other_ring]);other_entry=fullrings.get(frozenset(other_old))
-                if other_entry and frozenset(other_old) not in processed:
+                actual_obstacles.append(xy)
+                if operations['perimeter_loops'] and other_entry and frozenset(other_old) not in processed:
                     reserve=math.sqrt(2)*(other_entry[0]['radius']+.00025)/math.cos(math.pi/32)
                     angles=np.arange(32)*2*math.pi/32
                     xy=xy.mean(0)+reserve*np.column_stack((np.cos(angles),np.sin(angles)))
                 obstacles.append(xy)
             obstacles+=squares
+            actual_obstacles+=squares
             radius=entry[0]['radius'] if entry else None
             from .sparse_perimeter import choose as choose_sparse
             sparse=choose_sparse(hole,outer,obstacles) if radius is None else None
@@ -382,13 +453,19 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             else:
                 sq,attempts=sparse if sparse is not None else choose_perimeter(
                     hole,outer,obstacles,radius,center,preferred_clearance_m)
+            if sq is None and radius is not None and operations['perimeter_loops']:
+                # Future squares are a planning reservation, not existing
+                # geometry. Retry against real contours and already-built
+                # rings; later openings can adapt their own support layout.
+                sq,actual_attempts=choose_perimeter(
+                    hole,outer,actual_obstacles,radius,center,preferred_clearance_m)
+                attempts+=actual_attempts
             if sq is None:
-                boundary_limited=radius is not None and (not operations['perimeter_loops'] or
-                                 bool(attempts) and all(a.get('rejected')=='outer_boundary' for a in attempts))
+                boundary_limited=radius is not None
                 outside_vertices=sum(not inside(x,outer) for x in hole)
                 touches_outer=contacts(hole,outer)
                 clear_outer=not outside_vertices and not touches_outer
-                clear_obstacles=not any(contacts(hole,o) or any(inside(x,hole) for x in o) or inside(hole[0],o) for o in obstacles)
+                clear_obstacles=not any(contacts(hole,o) or any(inside(x,hole) for x in o) or inside(hole[0],o) for o in actual_obstacles)
                 if not boundary_limited or not clear_outer or not clear_obstacles:
                     source_outer=np.array([uv(i) for i in oldloops[0]])
                     source_hole=np.array([uv(i) for i in old])
@@ -418,6 +495,7 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             layouts.append(layout);ids_all=square+ring
             perimeters.append(dict(patch=gid,ids=square,hole=ring,attempts=attempts,
                                    kind='circular' if radius is not None else 'compound',
+                                   support_shape=attempts[-1].get('shape','square'),
                                    clearance_m=attempts[-1]['size']-radius if radius is not None else None,
                                    layout='straight_strips' if layout else 'triangulated',
                                    strips=[[ids_all[i] for i in f] for f in layout['strips']] if layout else []))
@@ -451,6 +529,11 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
         patches.append(dict(id=gid,old_faces=fs,new_faces=new,role=role))
     for cy in CY:
         rows=grids[cy['id']];frame=np.array(cy['frame']);origin=np.array(cy['origin']);c=np.array(cy['center'])
+        rail_graph={}
+        for a,b in cy['boundary']:
+            a=rim_alias.get(a,a);b=rim_alias.get(b,b)
+            if a==b:continue
+            rail_graph.setdefault(a,set()).add(b);rail_graph.setdefault(b,set()).add(a)
         for k in range(cy['segments']):
             j=(k+1)%len(rows[0]);ids=[rows[0][k],rows[0][j],rows[1][j],rows[1][k]]
             if not cy['full']:
@@ -458,12 +541,16 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
                 for a,b in zip(ids,ids[1:]+ids[:1]):
                     expanded.append(a)
                     if (a,b) not in [(rows[0][0],rows[1][0]),(rows[1][0],rows[0][0]),(rows[0][-1],rows[1][-1]),(rows[1][-1],rows[0][-1])]:continue
-                    pa=np.array(vertices[a]);pb=np.array(vertices[b]);delta=pb-pa;length2=float(delta@delta)
-                    candidates=[]
-                    for vi in rail_points[cy['id']]:
-                        t=float((V[vi]-pa)@delta/max(length2,1e-30))
-                        if 0<t<1 and np.linalg.norm(V[vi]-pa-t*delta)<1e-6:candidates.append((t,vi))
-                    expanded.extend(i for _,i in sorted(candidates))
+                    allowed=set(rail_points[cy['id']])|{a,b}
+                    path=[a];previous=None
+                    while path[-1]!=b:
+                        fresh=(rail_graph.get(path[-1],set())&allowed)-{previous}
+                        if len(fresh)!=1:
+                            raise ValueError('Branching cylinder end contour: axial rail')
+                        nxt=next(iter(fresh))
+                        if nxt in path:raise ValueError('Branching cylinder end contour: cyclic axial rail')
+                        previous=path[-1];path.append(nxt)
+                    expanded.extend(path[1:-1])
                 ids=expanded
             p=np.array([vertices[i] for i in ids]);q=(p-origin)@frame.T
             radial=np.array([*(q[:,:2].mean(0)-c),0.])@frame
@@ -472,7 +559,29 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             for i in ids:
                 pt=(np.array(vertices[i])-origin)@frame.T;nn=np.array([*(pt[:2]-c),0.])@frame
                 ns.append(nn/np.linalg.norm(nn)*cy['sign'])
-            add(ids,ns,'DETAIL_REBUILT','cylinder_'+str(cy['id']),snapshot['materials'][cy['faces'][0]])
+            if len(ids)>4:
+                # Collinear rail samples are needed by adjacent faces, but
+                # Blender's n-gon tessellator can emit zero-area triangles.
+                # Use constrained triangulation to retain every boundary edge.
+                normal=face_normals(np.array(vertices),[ids])[0];local=basis(normal)
+                pts=np.array([vertices[i] for i in ids])
+                planar=np.max(abs((pts-pts[0])@normal))<=1e-6
+                if planar:
+                    chart=((pts-pts[0])@local.T)[:,:2]
+                else:
+                    # An oblique trimmed rail may have a small measured step.
+                    # Unroll the cylinder for a constrained, simple chart.
+                    cp=(pts-origin)@frame.T
+                    theta=(np.arctan2(cp[:,1]-c[1],cp[:,0]-c[0])-cy['start'])%(2*math.pi)
+                    theta=np.where(abs(theta-2*math.pi)<1e-4,0.,theta)
+                    chart=np.column_stack((theta*cy['radius'],cp[:,2]))
+                _,tri=tessellation([chart])
+                for face in tri:
+                    expected=normal if planar else np.mean([ns[i] for i in face],axis=0)
+                    if np.cross(pts[face[1]]-pts[face[0]],pts[face[2]]-pts[face[0]])@expected<0:face=face[::-1]
+                    add([ids[i] for i in face],[ns[i] for i in face],'DETAIL_REBUILT','cylinder_'+str(cy['id']),snapshot['materials'][cy['faces'][0]])
+            else:
+                add(ids,ns,'DETAIL_REBUILT','cylinder_'+str(cy['id']),snapshot['materials'][cy['faces'][0]])
     for fi in sorted(protected_faces):
         add(F[fi],corners[off[fi]:off[fi+1]],'LOCKED_FEATURE','retained_feature',snapshot['materials'][fi])
     # Propagate annulus edge subdivisions into every incident wall. Explicit
@@ -535,6 +644,9 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
                                         candidate_vertices=p['hole'],
                                         reason='A support perimeter would not fit; the hole was joined directly'))
     result['topology']=topology(result['faces'])
+    result['hole_deviation_regions']=[
+        {key:cy[key] for key in ('frame','origin','center','radius','lo','hi','hole_deviation_m')}
+        for cy in CY if cy['category']=='circular_hole' and 'hole_deviation_m' in cy]
     invalid=any(result['topology'][k] for k in ['boundary','winding','duplicates'])
     if protection is None:
         invalid=invalid or bool(result['topology']['nonmanifold'])

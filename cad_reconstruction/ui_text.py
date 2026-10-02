@@ -82,8 +82,9 @@ def result_brief(row):
         if counts.get("winding") or counts.get("duplicates"):
             return "Mesh topology invalid. Repair source."
         if counts.get("nonmanifold"):
-            return "Non-manifold edges. Use guarded mode."
+            return "Non-manifold source. Automatic guarded strategy; inspect source."
     tests = (
+        ("Source geometry has", "Source surfaces intersect. Analyze solids or repair source."),
         ("No selected operation produced", "No safe change. No output."),
         ("No safe feature could be reconstructed", "No safe area found. No output."),
         ("UNRESOLVED_PERIMETER", "No room for support loop."),

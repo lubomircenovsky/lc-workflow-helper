@@ -15,6 +15,19 @@ FEATURES = [
 
 
 class OperationTests(unittest.TestCase):
+    def test_dependent_bends_can_be_accepted_together(self):
+        features=[dict(id=0,category='concave_arc',faces=[0],vertices=[0,1]),
+                  dict(id=1,category='convex_arc',faces=[1],vertices=[1,2]),
+                  dict(id=2,category='circular_hole',faces=[2],vertices=[3,4])]
+        def attempt(selected):
+            ids={f['id'] for f in selected if f['decision']=='REBUILD'}
+            if 2 in ids or bool(0 in ids)!=bool(1 in ids):
+                raise ValueError('Protected dependency conflicts')
+            return ids
+        result,skipped,_=recover(features,DEFAULTS,attempt,lambda _result:None)
+        self.assertEqual(result,{0,1})
+        self.assertEqual([row['feature'] for row in skipped],[2])
+
     def test_shading_skip_has_actionable_reason(self):
         reason = 'Shading boundary in planar patch'
         self.assertIn('Face directions', explain(reason))

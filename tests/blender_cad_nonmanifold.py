@@ -136,7 +136,8 @@ try:
     state.mode = 'SELECTED'
     for name, enabled in operations.items():
         setattr(state, name, enabled)
-    assert jobs.preflight(bpy.context, state, [good, bad])
+    assert not jobs.preflight(bpy.context, state, [good, bad])
+    assert jobs.preflight(bpy.context, state, [good, bad], preserve_nonmanifold=False)
     assert not jobs.preflight(bpy.context, state, [good, bad], preserve_nonmanifold=True)
     open_mesh = bpy.data.meshes.new('CAD Open Boundary')
     open_mesh.from_pydata([(0., 0., 0.), (1., 0., 0.), (0., 1., 0.)], [], [[0, 1, 2]])
@@ -162,9 +163,9 @@ try:
     with tempfile.TemporaryDirectory() as directory:
         state.run_root = directory
         assert bpy.ops.lcw.cad_reconstruct() == {'FINISHED'}
-        rejected = state.results[-1]
-        assert rejected.status == 'FAIL' and rejected.stage == 'preflight'
-        assert rejected.output is None and 'nonmanifold' in rejected.reason.lower()
+        automatic = state.results[-1]
+        assert automatic.status == 'REVIEW' and automatic.preserve_nonmanifold
+        assert automatic.output is not None and automatic.output.vertex_groups.get('CAD_Skipped')
         assert bpy.ops.lcw.cad_reconstruct(preserve_nonmanifold=True) == {'FINISHED'}
         row = state.results[-1]
         assert row.status == 'REVIEW' and row.preserve_nonmanifold

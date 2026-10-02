@@ -171,7 +171,7 @@ class LCW_OT_cad_prepare_uv(bpy.types.Operator):
         from . import jobs
 
         state = context.scene.lcw_cad_reconstruction
-        if jobs.ACTIVE_JOB is not None or state.cleanup_running:
+        if jobs.ACTIVE_JOB is not None or state.analysis_running or state.cleanup_running:
             self.report({"ERROR"}, "Wait for the CAD job to finish")
             return {"CANCELLED"}
         selected = tuple(obj for obj in context.selected_objects if obj.type == "MESH")
@@ -212,7 +212,7 @@ class LCW_OT_cad_analyze_uv(bpy.types.Operator):
         from . import jobs
 
         state = context.scene.lcw_cad_reconstruction
-        if jobs.ACTIVE_JOB is not None or state.cleanup_running:
+        if jobs.ACTIVE_JOB is not None or state.analysis_running or state.cleanup_running:
             self.report({"ERROR"}, "Wait for the CAD job to finish")
             return {"CANCELLED"}
         analyzed = regions = cuts = slits = 0

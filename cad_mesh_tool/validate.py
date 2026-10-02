@@ -25,14 +25,34 @@ def samples(v,t,areas,count):
     return np.concatenate([v,np.array([(v[a]+v[b])/2 for a,b in edges]),v[t].mean(1),(1-s)[:,None]*p[:,0]+(s*(1-r[:,1]))[:,None]*p[:,1]+(s*r[:,1])[:,None]*p[:,2]])
 
 
-def distance(points,v,t):
+def point_limits(points, epsilon, regions):
+    limits=np.full(len(points),epsilon,dtype=float)
+    for region in regions:
+        budget=region['hole_deviation_m']
+        local=(points-np.asarray(region['origin']))@np.asarray(region['frame']).T
+        radial=np.linalg.norm(local[:,:2]-region['center'],axis=1)
+        # Only the cylindrical hole and its changed rim neighborhood receive
+        # the independent budget. Distant planar/bend samples keep epsilon.
+        mask=(abs(radial-region['radius'])<=budget)&(local[:,2]>=region['lo']-budget)&(local[:,2]<=region['hi']+budget)
+        limits[mask]=budget
+    return limits
+
+
+def distance(points,v,t,epsilon=None,regions=(),center=None):
     bvh=BVHTree.FromPolygons([Vector(x) for x in v],[tuple(map(int,x)) for x in t],all_triangles=True)
     d=accurate_distances(points,v[t],bvh)
-    return dict(max_mm=float(d.max()*1000),p95_mm=float(np.percentile(d,95)*1000),rms_mm=float(np.sqrt(np.mean(d*d))*1000),samples=len(d),worst_sample_centered_m=np.asarray(points[int(np.argmax(d))]).tolist())
+    result=dict(max_mm=float(d.max()*1000),p95_mm=float(np.percentile(d,95)*1000),rms_mm=float(np.sqrt(np.mean(d*d))*1000),samples=len(d),worst_sample_centered_m=np.asarray(points[int(np.argmax(d))]).tolist())
+    if epsilon is not None:
+        limits=point_limits(points+center,epsilon,regions)
+        result.update(within_limits=bool(np.all(d<=limits)),max_budget_ratio=float(np.max(d/limits)),
+                      worst_budget_sample_centered_m=np.asarray(points[int(np.argmax(d/limits))]).tolist(),
+                      independent_hole_samples=int(np.count_nonzero(limits!=epsilon)))
+    return result
 
 
 def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20000,
-             require_reduction=True,protection=None,source_to_output=None,timings=None):
+             require_reduction=True,protection=None,source_to_output=None,timings=None,
+             hole_deviation_regions=()):
     started=time.perf_counter()
     mesh.calc_loop_triangles()
     center=np.asarray(snapshot['vertices']).mean(0)
@@ -44,9 +64,9 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
     if timings is None:timings={}
     print('VALIDATE intersections',flush=True);phase=time.perf_counter();isect=intersections(w,u)
     timings['intersections_seconds']=time.perf_counter()-phase
-    print('VALIDATE source_to_result',flush=True);phase=time.perf_counter();forward=distance(samples(v,t,ba,sample_count),w,u)
+    print('VALIDATE source_to_result',flush=True);phase=time.perf_counter();forward=distance(samples(v,t,ba,sample_count),w,u,epsilon,hole_deviation_regions,center)
     timings['source_to_result_seconds']=time.perf_counter()-phase
-    print('VALIDATE result_to_source',flush=True);phase=time.perf_counter();backward=distance(samples(w,u,aa,sample_count),v,t)
+    print('VALIDATE result_to_source',flush=True);phase=time.perf_counter();backward=distance(samples(w,u,aa,sample_count),v,t,epsilon,hole_deviation_regions,center)
     timings['result_to_source_seconds']=time.perf_counter()-phase
     annulus=stats(aq[labels=='PERIMETER_RING'])
     edge_roles={}
@@ -93,7 +113,7 @@ def validate(snapshot,mesh,origin,roles,perimeters,epsilon=.0004,sample_count=20
                 no_degenerate_triangles=bool(np.all(aa>1e-16)),
                 annulus_quality=annulus.get('max',0)<=20,perimeter_edges=not errors,straight_perimeter_layout=not strip_errors,
                 no_detected_intersections=not isect['intersections'],
-                sampled_distance=max(forward['max_mm'],backward['max_mm'])<=epsilon*1000)
+                sampled_distance=forward['within_limits'] and backward['within_limits'])
     if protection is None:
         checks['closed_oriented']=not any(top[k] for k in ('boundary','nonmanifold','winding','duplicates'))
     else:

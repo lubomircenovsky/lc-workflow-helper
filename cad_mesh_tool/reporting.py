@@ -2,6 +2,8 @@
 
 
 EXPLANATIONS = (
+    ('Source degenerate triangles', 'The source has zero-area or extremely small triangles that cannot be repaired safely. Inspect the affected faces or re-export the CAD solid.'),
+    ('Source geometry has', 'The source already contains intersecting surfaces. Analyze separate solids or repair the source first.'),
     ('No selected operation produced', 'The selected steps made no validated change, so no duplicate output was created.'),
     ('No safe feature could be reconstructed', 'No feature could be changed safely; the source was left untouched.'),
     ('UNRESOLVED_PERIMETER', 'There is not enough safe space to build a support loop around this opening.'),

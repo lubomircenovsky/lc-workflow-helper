@@ -6,6 +6,8 @@ from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatPrope
 
 class LCW_PG_CADResult(bpy.types.PropertyGroup):
     source: PointerProperty(type=bpy.types.Object)
+    source_label: StringProperty()
+    component_index: IntProperty(default=-1)
     output: PointerProperty(type=bpy.types.Object)
     status: StringProperty()
     geometry_status: StringProperty()
@@ -33,9 +35,13 @@ class LCW_PG_CADCollectionBinding(bpy.types.PropertyGroup):
 
 
 class LCW_PG_CADAnalysisLine(bpy.types.PropertyGroup):
+    source: PointerProperty(type=bpy.types.Object)
     severity: StringProperty()
     message: StringProperty()
     technical: StringProperty()
+    recommendation: StringProperty()
+    source_hash: StringProperty()
+    run_dir: StringProperty(subtype="DIR_PATH")
 
 
 class LCW_PG_CADState(bpy.types.PropertyGroup):
@@ -47,6 +53,9 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     epsilon_mm: FloatProperty(name="Deviation Limit (mm)", description="Maximum sampled shape deviation; not a guarantee of complete feature coverage", default=0.4, min=0.000001)
     straight_walls: BoolProperty(name="Merge Straight Walls", description="Merge validated straight wall patches without changing curved walls", default=True)
     circular_holes: BoolProperty(name="Circular Holes", description="Detect and reduce circular sheet-metal holes unless Keep Curve Segments is active", default=True)
+    hole_detail_factor: FloatProperty(name="Detail", description="Hole segment target multiplier: 1 keeps the previous target, lower is coarser, higher is finer; bounded by Hole Deviation and source segments", default=1.0, min=0.1, max=2.0, precision=2)
+    hole_epsilon_mm: FloatProperty(name="Hole Deviation (mm)", description="Independent sampled deviation limit near reconstructed circular holes; 0 uses Deviation Limit. Other surfaces keep the general limit", default=0.0, min=0.0, precision=3)
+    separate_solids: BoolProperty(name="Separate Solids", description="Reconstruct shells independently, including closed shells at many-face edges and unambiguous measured shared caps. Ambiguous open junction patches stay together. Assembly intersections are retained, not certified as one nonintersecting mesh", default=False)
     preserve_curve_segmentation: BoolProperty(name="Preserve Curve Segmentation", description="Keep existing hole and curved-surface contours unchanged while applying selected perimeter and planar cleanup operations", default=False)
     perimeter_loops: BoolProperty(name="Perimeter Loops", description="Build support loops around circular holes; can be run alone on an existing mesh", default=True)
     perimeter_clearance_mm: FloatProperty(name="Clearance (mm)", description="Preferred nominal gap from a circular hole to its square support loop in millimetres; 0 = Auto; smaller safe gaps may be used when space is tight", default=0.0, min=0.0, precision=2)
@@ -64,6 +73,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     active_result: IntProperty(default=0, min=0)
     bindings: CollectionProperty(type=LCW_PG_CADCollectionBinding)
     running: BoolProperty(default=False)
+    analysis_running: BoolProperty(default=False, options={"SKIP_SAVE"})
     progress: StringProperty(default="Idle")
     analysis_summary: StringProperty(default="Run Analyze before a long batch.")
     analysis_ready: BoolProperty(default=False)
@@ -89,13 +99,19 @@ CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding,
 
 def register_properties():
     bpy.types.Scene.lcw_cad_reconstruction = PointerProperty(type=LCW_PG_CADState)
+    from . import analysis_jobs
+    if analysis_jobs.cancel_active not in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.append(analysis_jobs.cancel_active)
 
 
 def unregister_properties():
-    from . import jobs
+    from . import jobs, analysis_jobs
 
     if jobs.ACTIVE_JOB is not None:
         jobs.ACTIVE_JOB.cancel()
         jobs.ACTIVE_JOB = None
+    analysis_jobs.cancel_active()
+    if analysis_jobs.cancel_active in bpy.app.handlers.load_pre:
+        bpy.app.handlers.load_pre.remove(analysis_jobs.cancel_active)
     if hasattr(bpy.types.Scene, "lcw_cad_reconstruction"):
         del bpy.types.Scene.lcw_cad_reconstruction

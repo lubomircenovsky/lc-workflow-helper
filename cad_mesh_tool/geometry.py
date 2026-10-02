@@ -63,9 +63,17 @@ def loops(faces):
     return result
 
 
-def planar_regions(v, faces, normals, adj, excluded=()):
+def planar_regions(v, faces, normals, adj, excluded=(), stable_seeds=False):
     used = set(excluded); result = []
-    for seed in range(len(faces)):
+    seeds = range(len(faces))
+    if stable_seeds:
+        # Thin CAD triangles have noisy normals. Start with the largest face
+        # and retain that reference throughout growth; tolerances stay fixed.
+        def area2(index):
+            p = v[faces[index]]
+            return float(np.linalg.norm(np.cross(p[1:-1]-p[0], p[2:]-p[0]).sum(0)))
+        seeds = sorted(seeds, key=lambda index: (-area2(index), index))
+    for seed in seeds:
         if seed in used:
             continue
         normal, origin = normals[seed], v[faces[seed][0]]
@@ -78,7 +86,7 @@ def planar_regions(v, faces, normals, adj, excluded=()):
                 if np.max(abs((v[faces[g]] - origin) @ normal)) > 1e-6:
                     continue
                 used.add(g); region.append(g); stack.append(g)
-        result.append(sorted(region))
+        result.append([seed] + sorted(set(region)-{seed}) if stable_seeds else sorted(region))
     return result
 
 
@@ -103,6 +111,21 @@ def segment_count(r, span, full=False, epsilon=.0004, residual=0., bend=True):
     while r*(1-math.cos(span/(2*n))) > e:
         n += 1
     return n
+
+
+def hole_segment_count(radius, original_segments, epsilon, residual=0.,
+                       detail_factor=1., hole_epsilon=None):
+    """Scale the old target, bounded by the hole's own chord-error budget."""
+    if not math.isfinite(detail_factor) or not .1 <= detail_factor <= 2.:
+        raise ValueError('Hole detail factor must be between 0.1 and 2.0')
+    budget = epsilon if hole_epsilon is None else hole_epsilon
+    if not math.isfinite(budget) or budget <= residual:
+        raise ValueError('Hole deviation limit must exceed the fitted residual')
+    baseline = min(segment_count(radius, 2*math.pi, True, epsilon, residual), original_segments)
+    target = max(3, math.ceil(baseline * detail_factor))
+    error = budget-residual
+    minimum = 3 if error >= radius else max(3, math.ceil(math.pi/math.acos(1-error/radius)))
+    return min(original_segments, max(target, minimum))
 
 
 def topology(faces):
