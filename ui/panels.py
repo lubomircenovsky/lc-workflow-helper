@@ -1517,22 +1517,29 @@ class LCW_PT_gn_library(LCW_PT_base, bpy.types.Panel):
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
-        box = layout.box()
-        box.label(text="GN_Screw_Replace_By_Geometry", icon="NODETREE")
         if not supported_version():
-            box.label(text="Requires Blender 5.2 or newer", icon="INFO")
+            layout.label(text="GN Library requires Blender 5.2 or newer", icon="INFO")
             return
 
-        box.prop(context.window_manager.lcw_state, "gn_library_mode", text="")
-        row = box.row(align=True)
-        load = row.operator("lcw.gn_library_add", text="Load Group", icon="IMPORT")
-        load.action = "LOAD"
-        add_row = row.row(align=True)
-        add_row.enabled = context.active_object is not None
-        add = add_row.operator("lcw.gn_library_add", text="Add Modifier", icon="GEOMETRY_NODES")
-        add.action = "MODIFIER"
-        box.label(text="Set Source Collection and Replacement", icon="INFO")
-        box.label(text="Object in the modifier.")
+        layout.prop(context.window_manager.lcw_state, "gn_library_mode", text="")
+        for asset_id, label in (
+            ("screw_replace", "GN_Screw_Replace_By_Geometry"),
+            ("uv_scale", "UV_scale"),
+        ):
+            box = layout.box()
+            box.label(text=label, icon="NODETREE")
+            row = box.row(align=True)
+            load = row.operator("lcw.gn_library_add", text="Load Group", icon="IMPORT")
+            load.action = "LOAD"
+            load.asset_id = asset_id
+            add_row = row.row(align=True)
+            add_row.enabled = context.active_object is not None
+            add = add_row.operator("lcw.gn_library_add", text="Add Modifier", icon="GEOMETRY_NODES")
+            add.action = "MODIFIER"
+            add.asset_id = asset_id
+            if asset_id == "screw_replace":
+                box.label(text="Set Source Collection and Replacement", icon="INFO")
+                box.label(text="Object in the modifier.")
 
 
 PANEL_CLASS_MAP = {

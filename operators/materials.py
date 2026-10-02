@@ -151,14 +151,19 @@ class LCW_OT_material_remove_unused_slots(bpy.types.Operator):
 
     def execute(self, context: bpy.types.Context):
         processed = 0
+        skipped_empty = 0
+        objects = selected_mesh_objects(context)
         with preserved_selection(context):
             if context.mode != "OBJECT":
                 bpy.ops.object.mode_set(mode="OBJECT")
-            for obj in selected_mesh_objects(context):
+            for obj in objects:
+                if not obj.material_slots:
+                    skipped_empty += 1
+                    continue
                 set_active_object(context, obj)
                 bpy.ops.object.material_slot_remove_unused()
                 processed += 1
-        self.report({"INFO"}, f"Processed {processed} object(s).")
+        self.report({"INFO"}, f"Processed {processed} object(s); skipped {skipped_empty} without material slots.")
         return {"FINISHED"}
 
 

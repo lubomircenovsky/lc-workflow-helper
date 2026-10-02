@@ -13,7 +13,11 @@ ASSET_ID = "screw_replace"
 ROOT_NAME = "GN_Screw_Replace_By_Geometry"
 CHILD_NAME = "GN_Screw_Analyze_Head_and_Axis"
 MIN_VERSION = (5, 2, 0)
-ASSET_PATH = Path(__file__).resolve().parent.parent / "gn_library" / "screw_replace.blend"
+ASSET_DIRECTORY = Path(__file__).resolve().parent.parent / "gn_library"
+ASSETS = {
+    ASSET_ID: (ROOT_NAME, (CHILD_NAME,), "screw_replace.blend"),
+    "uv_scale": ("UV_scale", (), "uv_scale.blend"),
+}
 TAG_ASSET = "lcw_gn_library_asset"
 TAG_INSTANCE = "lcw_gn_library_instance"
 TAG_PRIMARY = "lcw_gn_library_primary"
@@ -23,11 +27,11 @@ def supported_version() -> bool:
     return bpy.app.version >= MIN_VERSION
 
 
-def _primary_group():
+def _primary_group(asset_id: str):
     for group in bpy.data.node_groups:
         if (
             group.bl_idname == "GeometryNodeTree"
-            and group.get(TAG_ASSET) == ASSET_ID
+            and group.get(TAG_ASSET) == asset_id
             and group.get(TAG_PRIMARY, False)
         ):
             return group
@@ -43,28 +47,33 @@ def _rollback(groups_before: set, texts_before: set) -> None:
             bpy.data.texts.remove(text, do_unlink=True)
 
 
-def _append_group(*, primary: bool):
-    if not ASSET_PATH.is_file():
+def _append_group(asset_id: str, *, primary: bool):
+    root_name, child_names, filename = ASSETS[asset_id]
+    asset_path = ASSET_DIRECTORY / filename
+    if not asset_path.is_file():
         raise RuntimeError("Bundled GN library file is missing")
 
-    with bpy.data.libraries.load(str(ASSET_PATH), link=False) as (source, target):
-        required = {ROOT_NAME, CHILD_NAME}
+    with bpy.data.libraries.load(str(asset_path), link=False) as (source, target):
+        required = {root_name, *child_names}
         if not required.issubset(source.node_groups):
             raise RuntimeError("Bundled GN library is missing a required node group")
-        target.node_groups = [ROOT_NAME, CHILD_NAME]
+        target.node_groups = [root_name, *child_names]
         target.texts = list(source.texts)
 
-    root, child = target.node_groups
-    if root is None or child is None:
+    root, *children = target.node_groups
+    if root is None or any(child is None for child in children):
         raise RuntimeError("Could not append the bundled node groups")
-    if root.bl_idname != "GeometryNodeTree" or child.bl_idname != "GeometryNodeTree":
+    if any(group.bl_idname != "GeometryNodeTree" for group in (root, *children)):
         raise RuntimeError("The bundled data does not contain Geometry Nodes groups")
-    if not any(node.type == "GROUP" and node.node_tree == child for node in root.nodes):
+    if any(
+        not any(node.type == "GROUP" and node.node_tree == child for node in root.nodes)
+        for child in children
+    ):
         raise RuntimeError("The appended group lost its internal dependency")
 
     instance_id = uuid4().hex
-    for group in (root, child):
-        group[TAG_ASSET] = ASSET_ID
+    for group in (root, *children):
+        group[TAG_ASSET] = asset_id
         group[TAG_INSTANCE] = instance_id
     root[TAG_PRIMARY] = primary
     return root
@@ -73,13 +82,20 @@ def _append_group(*, primary: bool):
 class LCW_OT_gn_library_add(bpy.types.Operator):
     bl_idname = "lcw.gn_library_add"
     bl_label = "Add GN Library Asset"
-    bl_description = "Load the bundled screw replacement Geometry Nodes group"
+    bl_description = "Load a bundled Geometry Nodes group"
     bl_options = {"REGISTER", "UNDO"}
 
     action: EnumProperty(
         items=(("LOAD", "Load Group", "Load the group into this file"),
                ("MODIFIER", "Add Modifier", "Add a Geometry Nodes modifier to the active object")),
         default="LOAD",
+    )
+    asset_id: EnumProperty(
+        items=(
+            ("screw_replace", "Screw Replacement", "GN_Screw_Replace_By_Geometry"),
+            ("uv_scale", "UV Scale", "UV_scale"),
+        ),
+        default="screw_replace",
     )
 
     def execute(self, context: bpy.types.Context):
@@ -100,11 +116,12 @@ class LCW_OT_gn_library_add(bpy.types.Operator):
         modifier = None
         try:
             mode = context.window_manager.lcw_state.gn_library_mode
-            group = _primary_group() if mode == "REUSE" else None
+            group = _primary_group(self.asset_id) if mode == "REUSE" else None
             if group is None:
-                group = _append_group(primary=(mode == "REUSE"))
+                group = _append_group(self.asset_id, primary=(mode == "REUSE"))
             if self.action == "MODIFIER":
-                modifier = obj.modifiers.new(name="Screw replacement (procedural)", type="NODES")
+                modifier_name = "Screw replacement (procedural)" if self.asset_id == ASSET_ID else "UV scale"
+                modifier = obj.modifiers.new(name=modifier_name, type="NODES")
                 modifier.node_group = group
             self.report({"INFO"}, f"{'Added modifier with' if modifier else 'Loaded'} {group.name}")
             return {"FINISHED"}
