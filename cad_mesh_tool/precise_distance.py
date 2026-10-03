@@ -18,10 +18,64 @@ def point_triangles_squared(point,triangles):
         result=np.minimum(result,np.sum(diff*diff,axis=1))
     return result
 
+def _candidate_tree(low, high, leaf_size=64):
+    """Float64 bounds containing every triangle; no quantization or padding."""
+    centers = (low + high) * .5
+
+    def build(ids):
+        lower = low[ids].min(axis=0)
+        upper = high[ids].max(axis=0)
+        if len(ids) <= leaf_size:
+            return lower, upper, ids, None, None
+        axis = int(np.argmax(np.ptp(centers[ids], axis=0)))
+        middle = len(ids) // 2
+        order = np.argpartition(centers[ids, axis], middle)
+        return (lower, upper, None, build(ids[order[:middle]]),
+                build(ids[order[middle:]]))
+
+    return build(np.arange(len(low)))
+
+
+def _tree_squared(points, triangles, low, high, tree, upper):
+    """Prune enclosing boxes, then apply the original exact candidate predicate."""
+    values = np.full(len(points), np.inf, dtype=float)
+    stack = [(tree, np.arange(len(points)))]
+    while stack:
+        node, ids = stack.pop()
+        lower, higher, triangle_ids, left, right = node
+        separation = np.maximum(np.maximum(lower - points[ids], points[ids] - higher), 0)
+        ids = ids[np.sum(separation * separation, axis=1) <= upper[ids] + 1e-16]
+        if not len(ids):
+            continue
+        if triangle_ids is None:
+            stack.extend(((left, ids), (right, ids)))
+            continue
+        separation = np.maximum(np.maximum(
+            low[triangle_ids][None, :, :] - points[ids, None, :],
+            points[ids, None, :] - high[triangle_ids][None, :, :]), 0)
+        point_ids, local_triangles = np.nonzero(
+            np.sum(separation * separation, axis=2) <= upper[ids, None] + 1e-16)
+        for start in range(0, len(point_ids), 8192):
+            selected = ids[point_ids[start:start + 8192]]
+            eligible = triangle_ids[local_triangles[start:start + 8192]]
+            exact = point_triangles_squared(points[selected], triangles[eligible])
+            np.minimum.at(values, selected, exact)
+    return values
+
+
 def accurate_distances(points,triangles,bvh):
     from mathutils import Vector
     low=triangles.min(axis=1);high=triangles.max(axis=1)
     values=np.full(len(points),np.inf,dtype=float)
+    if len(triangles) >= 2048 and len(points):
+        tree = _candidate_tree(low, high)
+        for start in range(0, len(points), 256):
+            batch = points[start:start + 256]
+            nearest = np.asarray([bvh.find_nearest(Vector(point))[2] for point in batch], dtype=int)
+            upper = point_triangles_squared(batch, triangles[nearest])
+            values[start:start + len(batch)] = _tree_squared(
+                batch, triangles, low, high, tree, upper)
+        return np.sqrt(values)
     # Keep the exact float64 candidate test, but avoid thousands of tiny NumPy calls.
     for start in range(0,len(points),16):
         batch=points[start:start+16]
