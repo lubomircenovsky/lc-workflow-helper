@@ -2,14 +2,24 @@
 from .operations import DEFAULTS
 
 
+def solid_order(partitions, retry=None):
+    """Finish smaller independent bodies first without changing their identity."""
+    if retry is not None:
+        return [retry]
+    return sorted(range(len(partitions)),
+                  key=lambda index: (len(partitions[index]['faces']), index))
+
+
 def variants(features):
     curved = bool(features)
     holes = any(f['category'] == 'circular_hole' for f in features)
-    result = [('full', dict(DEFAULTS, perimeter_loops=False), False)]
+    # Establish a fully validated planar baseline before expensive curve
+    # recovery, so a worker deadline can retain useful completed geometry.
+    result = ([('keep_segments', dict(DEFAULTS, perimeter_loops=False), True)]
+              if curved else [])
+    result.append(('full', dict(DEFAULTS, perimeter_loops=False), False))
     if holes:
         result.append(('full_loops', dict(DEFAULTS), False))
-    if curved:
-        result.append(('keep_segments', dict(DEFAULTS, perimeter_loops=False), True))
     return result
 
 
@@ -33,20 +43,23 @@ def winner(trials):
     return min(passed, key=rank) if passed else None
 
 
-def completed_bodies(report, timed_out=False):
-    """Read only completed geometry; timeout may retain an unfinished search's best."""
+def completed_bodies(report, timed_out=False, interrupted_reason=None,
+                     include_unfinished=True):
+    """Keep validated checkpoints after deadlines, cancellation or worker failure."""
     bodies = list(report['bodies'])
-    if not timed_out:return bodies
+    reason = 'Time limit reached' if timed_out else interrupted_reason
+    if not reason:return bodies
     known = {body['component_index'] for body in bodies}
     active = report.get('active_body')
     if active and active.get('winner') and active['component_index'] not in known:
         active = dict(active, status='REVIEW', search_complete=False,
-                      reason='Time limit reached; best fully validated completed variant retained. '+active['reason'])
+                      reason=reason+'; best fully validated completed variant retained. '+active['reason'])
         bodies.append(active)
         known.add(active['component_index'])
+    if not include_unfinished:return bodies
     indices = report.get('selected_components', range(len(report['partitions'])))
     for index in indices:
         if index not in known:
             bodies.append(dict(component_index=index, status='FAIL', winner=None,
-                               reason='Worker time limit reached before this solid completed.'))
+                               reason=reason+' before this solid completed.'))
     return bodies

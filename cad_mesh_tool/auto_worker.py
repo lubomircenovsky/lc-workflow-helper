@@ -10,7 +10,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import bpy
 import numpy as np
 from cad_mesh_tool.api import code_hash
-from cad_mesh_tool.auto_policy import variants, fallback_variant, winner
+from cad_mesh_tool.artifacts import publish_json
+from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, solid_order
 from cad_mesh_tool.detect import discover
 from cad_mesh_tool.geometry import topology
 from cad_mesh_tool.intersections import intersections
@@ -25,9 +26,7 @@ def read(path):
 
 
 def publish(root, report):
-    temporary = root/'auto_manifest.tmp'
-    temporary.write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf8')
-    temporary.replace(root/'auto_manifest.json')
+    publish_json(root/'auto_manifest.json', report)
 
 
 def select_winner(item):
@@ -138,8 +137,8 @@ def main(root):
         report['active_body'] = item
         publish(root, report)
 
-    for index, partition in enumerate(partitions):
-        if retry is not None and index != retry:continue
+    for index in solid_order(partitions, retry):
+        partition = partitions[index]
         print('AUTO_SOLID', index+1, len(partitions), flush=True)
         try:item = process_body(root, source, profile, index, partition, checkpoint)
         except Exception as error:

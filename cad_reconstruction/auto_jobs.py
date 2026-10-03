@@ -105,7 +105,9 @@ class AutoBatch(jobs.CADBatch):
             raise ValueError('Auto report source or implementation changed')
         state = self.scene.lcw_cad_reconstruction
         source = self.objects[index]
-        for item in completed_bodies(report, job.get('timed_out', False)):
+        for item in completed_bodies(report, job.get('timed_out', False),
+                                     job.get('interrupted_reason'),
+                                     include_unfinished=not job.get('cancelled', False)):
             component = item['component_index']
             if component in job['imported']:continue
             row_index = self.row_offset+index if not job['imported'] else len(state.results)
@@ -139,11 +141,13 @@ class AutoBatch(jobs.CADBatch):
 
     def _finish_worker(self, index):
         job = self.running[index]
-        self._import_completed(index)
-        job['log'].close()
         report_path = job['run_dir']/'auto_manifest.json'
         complete = report_path.exists() and json.loads(report_path.read_text(encoding='utf8')).get('complete')
-        if (not complete and not job.get('timed_out')) or not job['imported']:
+        if not complete and not job.get('timed_out'):
+            job['interrupted_reason'] = 'Worker stopped unexpectedly'
+        self._import_completed(index)
+        job['log'].close()
+        if not job['imported']:
             state = self.scene.lcw_cad_reconstruction
             row = self._row(index) if not job['imported'] else state.results.add()
             row.source = self.objects[index];row.source_label = row.source.name
@@ -160,11 +164,14 @@ class AutoBatch(jobs.CADBatch):
         for job in self.running.values():
             if job['process'].poll() is None:job['process'].terminate()
         for index in list(self.running):
-            process = self.running[index]['process']
+            job = self.running[index]
+            process = job['process']
             try:process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait()
+            job['cancelled'] = True
+            job['interrupted_reason'] = 'Cancelled by user'
             try:self._import_completed(index)
             except (OSError, ValueError):pass
         super().cancel()

@@ -124,6 +124,26 @@ auto_worker.main(Path(sys.argv[sys.argv.index('--')+1]))
         assert any(r.status=='REVIEW' and r.output and 'Time limit' in r.reason for r in timed_rows)
         assert any(r.status=='PASS' and r.output for r in timed_rows)
         assert sum(r.status=='FAIL' for r in timed_rows)==2
+        for interruption in ('cancel', 'crash'):
+            offset=len(state.results)
+            pending=auto_jobs.AutoBatch(bpy.context,[obj],Path(temp))
+            auto_jobs.subprocess.Popen = slow_popen
+            try:pending.step()
+            finally:auto_jobs.subprocess.Popen = original_popen
+            child=pending.running[0]
+            deadline=time.monotonic()+50
+            while time.monotonic()<deadline:
+                checkpoint=child['run_dir']/'auto_manifest.json'
+                if checkpoint.exists() and json.loads(checkpoint.read_text()).get('active_body',{}).get('winner'):break
+                time.sleep(.02)
+            else:raise AssertionError('No checkpoint before interruption')
+            if interruption=='cancel':pending.cancel()
+            else:
+                child['process'].kill();child['process'].wait()
+                while pending.step():time.sleep(.02)
+            saved=list(state.results)[offset:]
+            assert any(r.output and r.status=='REVIEW' for r in saved), interruption
+            assert child['process'].poll() is not None
         count=len(state.results)
         retry_index=next(i for i,r in enumerate(state.results) if r.status=='REVIEW' and r.output)
         retry=SimpleNamespace(retry_index=retry_index, preserve_nonmanifold=False)

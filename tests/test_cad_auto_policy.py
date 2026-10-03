@@ -1,8 +1,13 @@
 import unittest
-from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, completed_bodies
+from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, completed_bodies, solid_order
 
 
 class AutoPolicyTests(unittest.TestCase):
+    def test_small_solids_first_preserves_component_identity(self):
+        partitions = [dict(faces=list(range(n))) for n in (100, 5, 5)]
+        self.assertEqual(solid_order(partitions), [1, 2, 0])
+        self.assertEqual(solid_order(partitions, retry=0), [0])
+
     def test_timeout_keeps_validated_checkpoint_and_marks_unfinished_solids(self):
         done = dict(component_index=0, status='PASS', winner='done')
         active = dict(component_index=1, status='PASS', winner='best', reason='Valid geometry')
@@ -17,6 +22,12 @@ class AutoPolicyTests(unittest.TestCase):
         self.assertEqual(len(completed_bodies(report, True)), 1)
         report['active_body'] = dict(active, winner=None)
         self.assertEqual(completed_bodies(report, True)[0]['status'], 'FAIL')
+        report['active_body'] = active
+        results = completed_bodies(report, interrupted_reason='Cancelled by user',
+                                   include_unfinished=False)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['status'], 'REVIEW')
+        self.assertIn('Cancelled by user', results[0]['reason'])
 
     def test_bounded_relevant_variants(self):
         self.assertEqual(len(variants([])), 1)
@@ -24,6 +35,8 @@ class AutoPolicyTests(unittest.TestCase):
         bend = dict(category='convex_arc')
         self.assertEqual(len(variants([bend])), 2)
         self.assertEqual(len(variants([hole,bend])), 3)
+        self.assertEqual([v[0] for v in variants([hole,bend])],
+                         ['keep_segments', 'full', 'full_loops'])
         self.assertIsNone(fallback_variant([hole,bend], [dict(variant='full',status='PASS',skipped=0)]))
         self.assertEqual(fallback_variant([hole,bend], [dict(variant='full',status='FAIL')])[0], 'holes_only')
         self.assertIsNone(fallback_variant([hole], [dict(variant='full',status='FAIL')]))

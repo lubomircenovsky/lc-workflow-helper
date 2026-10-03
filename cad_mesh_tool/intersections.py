@@ -1,5 +1,38 @@
 """Triangle narrow phase in float64; positive-area coplanar overlap or proper segment crossing."""
 import numpy as np
+import heapq
+
+
+def candidate_pairs(low, high, tolerance=1e-9):
+    """Float64 sweep; exact legacy AABB predicate, with bounded working memory.
+
+    Sweep the axis with the smallest relative average box width. The heap only
+    removes boxes that cannot overlap. Its conservative padding handles floating
+    rounding; acceptance uses the original predicate in original index order.
+    """
+    if not len(low):
+        return
+    span = high.max(axis=0) - low.min(axis=0)
+    relative = np.divide((high-low).mean(axis=0), span,
+                         out=np.full(3, np.inf), where=span > 0)
+    axis = int(np.argmin(relative))
+    active = set()
+    expiry = []
+    for index in np.argsort(low[:, axis], kind='stable'):
+        index = int(index)
+        while expiry and expiry[0][0] < low[index, axis]:
+            _, expired = heapq.heappop(expiry)
+            active.remove(expired)
+        if active:
+            others = np.fromiter(active, dtype=np.int64, count=len(active))
+            first = np.minimum(others, index)
+            second = np.maximum(others, index)
+            overlap = (np.all(high[second] >= low[first]-tolerance, axis=1)
+                       & np.all(low[second] <= high[first]+tolerance, axis=1))
+            yield from zip(first[overlap], second[overlap])
+        active.add(index)
+        limit = np.nextafter(high[index, axis] + 2*tolerance, np.inf)
+        heapq.heappush(expiry, (limit, index))
 
 def cross2(a,b):return a[0]*b[1]-a[1]*b[0]
 
@@ -32,16 +65,14 @@ def intersections(vertices,triangles):
     p=vertices[triangles];low=p.min(axis=1);high=p.max(axis=1)
     cr=np.cross(p[:,1]-p[:,0],p[:,2]-p[:,0]);length=np.linalg.norm(cr,axis=1);norm=cr/np.maximum(length[:,None],1e-30)
     hits=[];tested=0
-    for i in range(len(p)):
-        ids=np.flatnonzero(np.all(high>=low[i]-1e-9,axis=1)&np.all(low<=high[i]+1e-9,axis=1))
-        for j in ids:
-            if j<=i:continue
-            da=(p[j]-p[i,0])@norm[i];db=(p[i]-p[j,0])@norm[j]
-            if da.min()>1e-9 or da.max()<-1e-9 or db.min()>1e-9 or db.max()<-1e-9:continue
-            tested+=1
-            if max(abs(da))<1e-9 and max(abs(db))<1e-9:
-                axis=int(np.argmax(abs(norm[i])));axes=[k for k in range(3) if k!=axis]
-                area=clipped_area(p[i][:,axes]-p[i,0,axes],p[j][:,axes]-p[i,0,axes])
-                if area>1e-12:hits.append({'a':int(i),'b':int(j),'type':'coplanar_positive_area','area_projected':area})
-            elif proper_cross(p[i],p[j],norm[j]) or proper_cross(p[j],p[i],norm[i]):hits.append({'a':int(i),'b':int(j),'type':'proper_crossing'})
-    return {'intersections':hits,'narrow_phase_pairs':tested,'tolerance_m':1e-9,'coplanar_area_threshold_m2':1e-12,'method':'float64 AABB all pairs, coplanar convex polygon clipping and strict interior segment-triangle crossings; tangential contacts excluded'}
+    for i,j in candidate_pairs(low,high):
+        da=(p[j]-p[i,0])@norm[i];db=(p[i]-p[j,0])@norm[j]
+        if da.min()>1e-9 or da.max()<-1e-9 or db.min()>1e-9 or db.max()<-1e-9:continue
+        tested+=1
+        if max(abs(da))<1e-9 and max(abs(db))<1e-9:
+            axis=int(np.argmax(abs(norm[i])));axes=[k for k in range(3) if k!=axis]
+            area=clipped_area(p[i][:,axes]-p[i,0,axes],p[j][:,axes]-p[i,0,axes])
+            if area>1e-12:hits.append({'a':int(i),'b':int(j),'type':'coplanar_positive_area','area_projected':area})
+        elif proper_cross(p[i],p[j],norm[j]) or proper_cross(p[j],p[i],norm[i]):hits.append({'a':int(i),'b':int(j),'type':'proper_crossing'})
+    hits.sort(key=lambda hit:(hit['a'],hit['b']))
+    return {'intersections':hits,'narrow_phase_pairs':tested,'tolerance_m':1e-9,'coplanar_area_threshold_m2':1e-12,'method':'float64 AABB sweep, coplanar convex polygon clipping and strict interior segment-triangle crossings; tangential contacts excluded'}
