@@ -122,6 +122,10 @@ class AutoBatch(jobs.CADBatch):
                     if not directory.is_relative_to(job['run_dir'].resolve()):raise ValueError('Auto result escaped run directory')
                     manifest = json.loads((directory/'manifest.json').read_text(encoding='utf8'))
                     if manifest['result_sha256'] != item['result_sha256']:raise ValueError('Auto winner artifact changed')
+                    if manifest.get('partial') and manifest.get('summary'):
+                        # Selection metrics must not hide preserved junctions,
+                        # stage fallbacks or sharp-edge/shading warnings.
+                        reason = manifest['summary']+' '+reason
                     output = jobs._import_result(state, source, directory, status, self.routing)
                     manifest = dict(manifest, partial=status == 'REVIEW', summary=reason)
             except Exception as error:

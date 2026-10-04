@@ -72,6 +72,25 @@ try:
         assert state.results[-1].status == 'FAIL'
         assert 'remained inaccessible' in state.results[-1].reason
         assert batch._row(1).status == 'PENDING'  # Next source remains available.
+        batch, job = prepared()
+        winner = root / 'winner'
+        winner.mkdir()
+        warning = 'Original non-manifold junction preserved. 3 sharp edge(s) changed; review shading.'
+        (winner / 'manifest.json').write_text(json.dumps(dict(
+            geometry_status='PASS', partial=True, summary=warning, result_sha256='fixture')))
+        report.write_text(json.dumps(dict(complete=True, source_hash=before,
+            code_hash=code_hash(), partitions=[{}], bodies=[dict(
+                component_index=0, status='REVIEW', winner='winner',
+                result_sha256='fixture', reason='Lowest final triangle count.',
+                selected_variant='full', before=12, triangles=12,
+                accepted=1, detected=1, reduced=0, untreated=[], guarded=True)])))
+        # Geometry import has independent integration coverage. This fixture
+        # isolates what the real RNA result row presents to the user.
+        with patch.object(auto_jobs.jobs, '_import_result', return_value=source):
+            batch._finish_worker(0)
+        assert warning in batch._row(0).reason
+        assert 'Lowest final triangle count.' in batch._row(0).reason
+        assert warning in batch._row(0).summary
         assert fingerprint(source) == before
     print('CAD_AUTO_REPORT_LOCK_OK', bpy.app.version_string)
 finally:
