@@ -137,9 +137,32 @@ class AutoBatch(jobs.CADBatch):
 
     def _read_worker_progress(self, job):
         super()._read_worker_progress(job)
-        self._import_completed(job['index'])
+        try:self._import_completed(job['index'])
+        except PermissionError:
+            # A Windows rename/reader sharing collision is transient. Poll on
+            # the next UI tick rather than cancelling every active worker.
+            pass
 
     def _finish_worker(self, index):
+        try:self._finish_worker_report(index)
+        except PermissionError as error:
+            job = self.running[index]
+            since = job.setdefault('report_blocked_since', time.perf_counter())
+            if time.perf_counter()-since < 5.:
+                return
+            # Bound retries even after the process has exited. Keep imported
+            # bodies and isolate a persistent file-access failure to this item.
+            state = self.scene.lcw_cad_reconstruction
+            row = state.results.add() if job['imported'] else self._row(index)
+            row.source = self.objects[index];row.source_label = row.source.name
+            row.execution_mode = 'AUTO';row.status = 'FAIL';row.stage = 'Auto report'
+            row.auto_run_dir = row.run_dir = str(job['run_dir'])
+            row.reason = f'Auto report remained inaccessible; completed results preserved: {error}'
+            job['log'].close()
+            del self.running[index]
+            self.completed += 1
+
+    def _finish_worker_report(self, index):
         job = self.running[index]
         report_path = job['run_dir']/'auto_manifest.json'
         complete = report_path.exists() and json.loads(report_path.read_text(encoding='utf8')).get('complete')
