@@ -55,8 +55,69 @@ def annulus_quality(outer,inner):
     return max(max(np.sum((p[f[(i+1)%3]]-p[f[i]])**2) for i in range(3))/max(abs(orient(*p[f])),1e-30) for f in ff)
 
 
+def trimmed_level_rims(cy, p, angle):
+    """Recognize two level chains joined by measured, possibly skew rails.
+
+    Require two level chains and two nonbranching measured rail paths. Rail
+    subdivisions stay fixed; an arbitrary contour is not a pair of rims.
+    """
+    edges = {tuple(sorted(e)) for e in cy['boundary']}
+    if len(edges) != len(cy['boundary']):
+        return None
+    boundary = {i for edge in edges for i in edge}
+    degree = Counter(i for edge in edges for i in edge)
+    if not boundary or any(degree[i] != 2 for i in boundary):
+        return None
+    rows = [sorted((i for i in boundary if abs(p[i, 2]-z) < 1e-6),
+                   key=lambda i: (angle[i], i)) for z in (cy['lo'], cy['hi'])]
+    if any(len(row) < 3 for row in rows):
+        return None
+    if set(rows[0]) & set(rows[1]):
+        return None
+    chains = set()
+    for row in rows:
+        if any(angle[b]-angle[a] <= 1e-9 for a, b in zip(row, row[1:])):
+            return None
+        chains.update(tuple(sorted((a, b))) for a, b in zip(row, row[1:]))
+    if not chains <= edges:
+        return None
+    rails = edges - chains
+    graph = {}
+    for a, b in rails:
+        graph.setdefault(a, set()).add(b)
+        graph.setdefault(b, set()).add(a)
+    visited = set()
+    for k in (0, -1):
+        current, end = rows[0][k], rows[1][k]
+        previous = None
+        path = set()
+        while current != end:
+            if current in path:
+                return None
+            path.add(current)
+            following = graph.get(current, set()) - {previous}
+            if len(following) != 1:
+                return None
+            nxt = next(iter(following))
+            # The rail must run from the lower to the upper axial level.
+            if p[nxt, 2] < p[current, 2]-1e-6:
+                return None
+            visited.add(tuple(sorted((current, nxt))))
+            previous, current = current, nxt
+        if graph.get(end) != {previous}:
+            return None
+    if visited != rails:
+        return None
+    return rows
+
+
 def cylinder_rims(cy,p):
     """Two end chains, including planar oblique cuts of an open bend."""
+    return _cylinder_rim_data(cy, p)[0]
+
+
+def _cylinder_rim_data(cy, p):
+    skew_intervals = False
     bd=sorted({i for e in cy['boundary'] for i in e});c=np.array(cy['center'])
     angular_tolerance=max(1e-4,2e-6/cy['radius'])
     angle={i:float((math.atan2(p[i,1]-c[1],p[i,0]-c[0])-cy['start'])%(2*math.pi)) for i in bd}
@@ -102,7 +163,12 @@ def cylinder_rims(cy,p):
         if len(rings)!=2:
             constant=[[i for i in bd if abs(p[i,2]-level)<1e-6] for level in (cy['lo'],cy['hi'])]
             if all(len(r)>=3 and min(angle[i] for i in r)<angular_tolerance and abs(max(angle[i] for i in r)-cy['span'])<angular_tolerance for r in constant):rings=constant
-            else:raise ValueError('Expected two cylinder end contours: '+str((cy['id'],[len(r) for r in rings])))
+            else:
+                measured = trimmed_level_rims(cy, p, angle)
+                if measured is None:
+                    raise ValueError('Expected two cylinder end contours: '+str((cy['id'],[len(r) for r in rings])))
+                rings = measured
+                skew_intervals = True
         rings.sort(key=lambda ids:float(p[ids,2].mean()))
     result=[]
     for ids in rings:
@@ -113,7 +179,7 @@ def cylinder_rims(cy,p):
             # a constant extrusion or planar cap. Full validation bounds error.
             result.append((ids,None,None))
         else:result.append((ids,normal,float(normal@center)))
-    return result
+    return result, skew_intervals
 
 
 def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clearance_m=0.0):
@@ -256,15 +322,22 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
         claimed.update(cy['faces'])
         frame=np.array(cy['frame']);origin=np.array(cy['origin']);p=(V-origin)@frame.T
         c=np.array(cy['center']);n=cy['segments'];boundary=sorted({i for e in cy['boundary'] for i in e});rows=[];chosen=set();rim_vertices=set();avoided_move=0.
-        for ids,end_normal,end_d in cylinder_rims(cy,p):
+        rims, skew_intervals = _cylinder_rim_data(cy, p)
+        for ids,end_normal,end_d in rims:
             rim_vertices.update(ids)
             level=float(p[ids,2].mean())
             theta={i:float((math.atan2(p[i,1]-c[1],p[i,0]-c[0])-cy['start'])%(2*math.pi)) for i in ids}
             theta={i:0. if abs(a-2*math.pi)<1e-4 else a for i,a in theta.items()}
-            row=select_rim_samples(ids,theta,n if cy['full'] else n+1,cy['span'],cy['full'])
+            # Skew side cuts give the two end chains different angular ranges.
+            # Sample each measured range rather than extending both to the
+            # fitted cylinder's full interval (which moves points past a cut).
+            start_angle = min(theta.values()) if skew_intervals else 0.
+            end_span = max(theta.values())-start_angle if skew_intervals else cy['span']
+            sample_theta = {i: a-start_angle for i, a in theta.items()}
+            row=select_rim_samples(ids,sample_theta,n if cy['full'] else n+1,end_span,cy['full'])
             preserve_samples=len(row)==len(ids)
             for k,vi in enumerate(row):
-                angle=cy['span']*k/n
+                angle=start_angle+end_span*k/n
                 if cy['full'] or k not in (0,n):
                     a=cy['start']+angle;xy=c+cy['radius']*np.array([math.cos(a),math.sin(a)])
                     if end_normal is None:
