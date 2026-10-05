@@ -2,17 +2,22 @@
 import math
 from collections import Counter, defaultdict
 import numpy as np
-from .geometry import adjacency, face_normals, planar_regions, basis, circle_fit, segment_count, loops
+from .geometry import (adjacency, face_normals, planar_regions, basis, circle_fit,
+                       segment_count, loops, measured_cylinder_ends)
 
 
-def complete_cylinders(vertices,faces,features,epsilon=.0004):
+def complete_cylinders(vertices,faces,features,epsilon=.0004,excluded=(),_geometry=None):
     """Recover cylinder faces hidden inside a mixed coplanar detector region.
 
     Region-level growth proposes the cylinder; face-level growth verifies its
     entire connected support and recomputes the rim geometry before rebuilding.
     """
-    v=np.asarray(vertices,dtype=float);normals=face_normals(v,faces);_,adj=adjacency(faces)
+    if _geometry is None:
+        v=np.asarray(vertices,dtype=float);normals=face_normals(v,faces);_,adj=adjacency(faces)
+    else:
+        v,normals,adj=_geometry
     claimed={fi:cy['id'] for cy in features for fi in cy['faces']}
+    claimed.update({fi: None for fi in excluded})
     for cy in features:
         frame=np.array(cy['frame']);p=(v-cy['origin'])@frame.T
         radial=abs(np.linalg.norm(p[:,:2]-cy['center'],axis=1)-cy['radius'])
@@ -20,7 +25,8 @@ def complete_cylinders(vertices,faces,features,epsilon=.0004):
         while stack:
             for fi in sorted(adj[stack.pop()]-support):
                 if fi in claimed or abs(normals[fi]@frame[2])>=.8:continue
-                if max(radial[faces[fi]])<=1e-6:support.add(fi);stack.append(fi)
+                limit=1e-5 if cy.get('measured_axis') else 1e-6
+                if max(radial[faces[fi]])<=limit:support.add(fi);stack.append(fi)
         if len(support)==len(cy['faces']):continue
         fs=sorted(support);ids=sorted({i for f in fs for i in faces[f]})
         c,r,res=circle_fit(p[ids,:2])
@@ -37,6 +43,11 @@ def complete_cylinders(vertices,faces,features,epsilon=.0004):
                  max(abs(p[list(edge),2]-hi))<1e-6 for edge in boundary)
         start=float(angles[0]) if full else float(angles[(k+1)%len(angles)]);span=2*math.pi if full else float(2*math.pi-gaps[k])
         old_segments=min(map(len,rims))-(0 if full else 1)
+        if cy.get('measured_axis') and not full:
+            ends=measured_cylinder_ends(boundary,p,c,r,start,span)
+            if ends is None:continue
+            old_segments=min(map(len,ends))-1
+            cy['measured_end_contours']=True
         if old_segments<3:continue
         cy.update(faces=fs,vertices=ids,boundary=boundary,center=c.tolist(),radius=r,residual=res,lo=lo,hi=hi,start=start,span=span,
                   full=full,category=('circular_hole' if cy['sign']<0 else 'outer_cylinder') if full else cy['category'],
@@ -155,17 +166,20 @@ def refine_open_interval(vertices, feature, epsilon):
                    interval_refined_from_boundary=True)
 
 
-def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon=None):
+def _discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon=None,
+              excluded=(), measured=False):
     v=np.asarray(vertices,dtype=float)
     center=v.mean(0); v=v-center
     normals=face_normals(v,faces); ef,adj=adjacency(faces)
-    regions=planar_regions(v,faces,normals,adj)
+    completion_geometry=(np.asarray(vertices,dtype=float),normals,adj)
+    regions=planar_regions(v,faces,normals,adj,excluded=excluded,stable_seeds=measured)
     owner={f:i for i,fs in enumerate(regions) for f in fs}
     rverts=[sorted({i for f in fs for i in faces[f]}) for fs in regions]
     rn=np.array([normals[fs[0]] for fs in regions]); ra=[set() for _ in regions]
     for fs in ef.values():
         if len(fs)==2:
             a,b=map(owner.get,fs)
+            if a is None or b is None:continue
             if a!=b:ra[a].add(b);ra[b].add(a)
     # Axes come from measured shared rails, not the world coordinate frame.
     votes=defaultdict(list)
@@ -178,7 +192,30 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
             if axis[np.argmax(abs(axis))]<0:axis=-axis
             votes[tuple(np.round(axis,3))].append(axis)
     axes=[]
-    for i,ids in enumerate(rverts):
+    measured_seeds=[]
+    if measured:
+        # Facet-normal cross products amplify noise in long, thin triangles.
+        # Shared longitudinal edges supply a measured axis. Require repeated
+        # parallel evidence, then use its longest edge (no world-axis snapping).
+        rail_votes=defaultdict(list)
+        for (a,b),fs in ef.items():
+            if len(fs)!=2 or any(fi not in owner for fi in fs):continue
+            na,nb=normals[fs]
+            cosine=float(na@nb)
+            if not math.cos(math.radians(45))<cosine<math.cos(math.radians(.2)):continue
+            delta=v[b]-v[a];length=float(np.linalg.norm(delta))
+            if length<=1e-6:continue
+            axis=delta/length
+            if axis[np.argmax(abs(axis))]<0:axis=-axis
+            rail_votes[tuple(np.round(axis,3))].append((length,axis,{owner[fi] for fi in fs}))
+        for _,votes_for_axis in sorted(rail_votes.items(),key=lambda item:(-len(item[1]),item[0])):
+            if len(votes_for_axis)<3:continue
+            axis=max(votes_for_axis,key=lambda item:item[0])[1]
+            if sum(float(axis@other)>1-1e-10 for _,other,_ in votes_for_axis)<3:continue
+            if not any(abs(axis@a)>1-1e-10 for a in axes):
+                axes.append(axis)
+                measured_seeds.append(set().union(*(ids for _,_,ids in votes_for_axis)))
+    for i,ids in (enumerate(rverts) if not measured else ()):
         if len(ids)>=6:
             z=rn[i].copy()
             if z[np.argmax(abs(z))]<0:z=-z
@@ -190,13 +227,13 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
                     if res<1e-6:justified=True;break
             except ValueError:pass
             if justified and not any(abs(z@a/np.linalg.norm(a))>1-1e-8 for a in axes):axes.append(z)
-    for _,xs in sorted(votes.items(),key=lambda x:(-len(x[1]),x[0])):
+    for _,xs in (sorted(votes.items(),key=lambda x:(-len(x[1]),x[0])) if not measured else ()):
         if len(xs)<6:continue
         z=np.mean(xs,axis=0);z/=np.linalg.norm(z)
         if not any(abs(z@a/np.linalg.norm(a))>1-1e-8 for a in axes):axes.append(z)
     found={}; discovered_regions=set()
     max_radius = float(np.linalg.norm(np.ptp(v, axis=0))) * 10
-    for axis in axes:
+    for axis_index,axis in enumerate(axes):
         frame=basis(axis); p=v@frame.T
         eligible=set(np.flatnonzero(abs(rn@frame[2])<.8).tolist())-discovered_regions
         # A cylinder's side-facet normal is perpendicular to its axial rails.
@@ -205,6 +242,7 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
         # hundreds of unrelated axis votes on curved assemblies.
         seeds = eligible & set(np.flatnonzero(
             abs(rn @ frame[2]) < math.sin(math.radians(.2))).tolist())
+        if measured:seeds &= measured_seeds[axis_index]
         tested=set(); accepted_support=[]
         for a in sorted(seeds):
             for b in [a]+sorted(ra[a]&seeds):
@@ -232,9 +270,14 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
                 boundary=[e for e,n in ec.items() if n==1]
                 lo,hi=float(p[ids,2].min()),float(p[ids,2].max())
                 if hi-lo<1e-6:continue
+                # Supplemental recovery is for longitudinal sheet bends.
+                # Short pieces of compound corner blends can fit a circle
+                # through a few vertices without constituting a cylinder.
+                if measured and hi-lo<2*r:continue
                 # A closed cylinder has only rim boundary edges. Open strips also have two rails.
                 is_rim=lambda e: (max(abs(p[list(e),2]-lo))<1e-6 or max(abs(p[list(e),2]-hi))<1e-6)
                 full=all(is_rim(e) for e in boundary)
+                if measured and full:continue
                 angles=np.sort(np.unique(np.round(np.arctan2(p[ids,1]-c[1],p[ids,0]-c[0]),7)))
                 gaps=np.diff(np.r_[angles,angles[0]+2*math.pi]); k=int(np.argmax(gaps))
                 start=float(angles[(k+1)%len(angles)]);span=float(2*math.pi-gaps[k])
@@ -243,11 +286,17 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
                 # Every boundary vertex must lie on a rim or the start/end rail.
                 bd=sorted({i for e in boundary for i in e})
                 rims=[[i for i in bd if abs(p[i,2]-level)<1e-6] for level in (lo,hi)]
-                if min(map(len,rims))<3:continue
+                measured_ends=None
+                if min(map(len,rims))<3 and not (measured and not full):continue
                 theta=(np.arctan2(p[bd,1]-c[1],p[bd,0]-c[0])-start)%(2*math.pi)
                 theta=np.where(abs(theta-2*math.pi)<1e-5,0.,theta)
                 onrim=(abs(p[bd,2]-lo)<1e-6)|(abs(p[bd,2]-hi)<1e-6)
-                if not full and not np.all(onrim|(abs(theta)<1e-4)|(abs(theta-span)<1e-4)):continue
+                rectangular=min(map(len,rims))>=3 and np.all(onrim|(abs(theta)<1e-4)|(abs(theta-span)<1e-4))
+                if not full and not rectangular:
+                    if not measured:continue
+                    measured_ends=measured_cylinder_ends(boundary,p,c,r,start,span)
+                    if measured_ends is None:continue
+                    rims=measured_ends
                 rad=np.zeros((len(fs),3))
                 rad[:,:2]=np.array([p[faces[f],:2].mean(0)-c for f in fs])
                 score=np.sum(np.sum((normals[fs]@frame.T)*rad,axis=1))
@@ -258,10 +307,21 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
                 agreement=np.sum((normals[fs]@frame.T)*rad,axis=1)*sign
                 if np.any(agreement<=.5*radial_lengths):continue
                 old_segments=min(map(len,rims))-(0 if full else 1)
+                # Four measured intervals distinguish a sustained bend from
+                # tiny compound-corner pieces fitting only three facets.
+                if measured and old_segments<4:continue
                 n=min(segment_count(r,span,full,epsilon,res),old_segments)
                 category='circular_hole' if full and sign<0 else 'outer_cylinder' if full else 'concave_arc' if sign<0 else 'convex_arc'
                 record=dict(faces=fs,vertices=ids,boundary=boundary,frame=frame.tolist(),origin=center.tolist(),center=c.tolist(),radius=r,residual=res,lo=lo,hi=hi,start=start,span=span,full=full,sign=sign,segments=n,segments_before=old_segments,category=category)
-                key=tuple(fs)
+                if measured_ends is not None:record['measured_end_contours']=True
+                if measured:
+                    record['measured_axis']=True
+                    # Complete each proposal before competing ownership is
+                    # assigned. Otherwise two fits of the same noisy cylinder
+                    # can block one another and create an artificial seam.
+                    record['id']=-1
+                    complete_cylinders(vertices,faces,[record],epsilon,excluded,completion_geometry)
+                key=tuple(record['faces'])
                 if key not in found or res<found[key]['residual']:found[key]=record
                 accepted_support.append(support)
                 discovered_regions.update(support)
@@ -270,7 +330,7 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
         if claimed.intersection(cy['faces']):
             overlaps.append(cy['faces']);continue
         cy['id']=len(features);claimed.update(cy['faces']);features.append(cy)
-    features=complete_cylinders(vertices,faces,features,epsilon)
+    features=complete_cylinders(vertices,faces,features,epsilon,excluded)
     for feature in features:
         refine_rail_axis(vertices, feature, epsilon)
         refine_open_interval(vertices, feature, epsilon)
@@ -286,6 +346,21 @@ def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon
     return dict(features=features,region_count=len(regions),axis_candidates=len(axes),
                 covered_faces=len(claimed),unclaimed_faces=sorted(set(range(len(faces)))-claimed),
                 overlapping_candidates=len(overlaps))
+
+
+def discover(vertices, faces, epsilon=.0004, hole_detail_factor=1., hole_epsilon=None):
+    """Keep established ownership, then seek measured bends in unclaimed faces."""
+    plan=_discover(vertices,faces,epsilon,hole_detail_factor,hole_epsilon)
+    claimed={fi for cy in plan['features'] for fi in cy['faces']}
+    extra=_discover(vertices,faces,epsilon,hole_detail_factor,hole_epsilon,
+                    excluded=claimed,measured=True)
+    for feature in extra['features']:
+        feature['id']=len(plan['features'])
+        plan['features'].append(feature)
+    claimed.update(fi for cy in extra['features'] for fi in cy['faces'])
+    plan.update(covered_faces=len(claimed),unclaimed_faces=sorted(set(range(len(faces)))-claimed),
+                supplemental_features=len(extra['features']))
+    return plan
 
 
 if __name__=='__main__':

@@ -101,6 +101,103 @@ def circle_fit(points):
     return c, r, float(np.max(abs(radii-r)))
 
 
+def measured_cylinder_ends(boundary, p, center, radius, start, span):
+    """Two simple angularly monotone end chains separated by axial rails.
+
+    Unlike axial extrema, measured paths also describe oblique and curved
+    sheet corners. Reject holes, branches, folded chains and crossing ends.
+    This is a boundary classification, never permission to skip validation.
+    """
+    edges = {tuple(sorted(edge)) for edge in boundary}
+    degree = Counter(i for edge in edges for i in edge)
+    if len(edges) != len(boundary) or not degree or any(n != 2 for n in degree.values()):
+        return None
+    angle = {i: float((math.atan2(p[i, 1]-center[1], p[i, 0]-center[0])-start)
+                      % (2*math.pi)) for i in degree}
+    tolerance = max(1e-4, 2e-6/radius)
+    angle = {i: 0. if abs(a-2*math.pi) < tolerance else a for i, a in angle.items()}
+    rails = set()
+    graph = defaultdict(set)
+    for a, b in edges:
+        axial = abs(p[a, 2]-p[b, 2])
+        radial = np.linalg.norm(p[a, :2]-p[b, :2])
+        if (axial > max(1e-12, 10*radial) and
+                any(abs(angle[a]-t) < tolerance and abs(angle[b]-t) < tolerance
+                    for t in (0., span))):
+            rails.add((a, b))
+        else:
+            graph[a].add(b)
+            graph[b].add(a)
+    pending = set(graph)
+    rows = []
+    while pending:
+        seed = min(pending)
+        component, stack = {seed}, [seed]
+        pending.remove(seed)
+        while stack:
+            fresh = graph[stack.pop()] & pending
+            pending -= fresh
+            component |= fresh
+            stack.extend(fresh)
+        if (len(component) < 3 or sum(len(graph[i]) == 1 for i in component) != 2
+                or any(len(graph[i]) > 2 for i in component)):
+            return None
+        row = sorted(component, key=lambda i: (angle[i], i))
+        if (angle[row[0]] > tolerance or abs(angle[row[-1]]-span) > tolerance
+                or any(angle[b]-angle[a] <= 1e-9 or b not in graph[a]
+                       for a, b in zip(row, row[1:]))):
+            return None
+        rows.append(row)
+    if len(rows) != 2:
+        return None
+    rows.sort(key=lambda row: float(p[row, 2].mean()))
+    rail_graph = defaultdict(set)
+    for a, b in rails:
+        rail_graph[a].add(b)
+        rail_graph[b].add(a)
+    visited = set()
+    for k in (0, -1):
+        current, end = rows[0][k], rows[1][k]
+        previous, path = None, set()
+        while current != end:
+            if current in path:
+                return None
+            path.add(current)
+            following = rail_graph[current] - {previous}
+            if len(following) != 1:
+                return None
+            nxt = next(iter(following))
+            if p[nxt, 2] <= p[current, 2]:
+                return None
+            visited.add(tuple(sorted((current, nxt))))
+            previous, current = current, nxt
+        if rail_graph[end] != {previous}:
+            return None
+    if visited != rails:
+        return None
+    knots = sorted({angle[i] for row in rows for i in row})
+    heights = [np.interp(knots, [angle[i] for i in row], p[row, 2]) for row in rows]
+    if np.min(heights[1]-heights[0]) <= 1e-6:
+        return None
+    return rows
+
+
+def expanded_edge_chain(splits, a, b, path=frozenset()):
+    """Resolve nested measured subdivisions without losing intermediate cuts."""
+    edge=(a,b)
+    chain=splits.get(edge,[a,b])
+    if chain==[a,b]:return chain
+    if edge in path or chain[0]!=a or chain[-1]!=b or len(set(chain))!=len(chain):
+        raise ValueError('Conflicting nested edge subdivisions')
+    result=[]
+    for x,y in zip(chain,chain[1:]):
+        result.extend(expanded_edge_chain(splits,x,y,path|{edge})[:-1])
+    result.append(b)
+    if len(set(result))!=len(result):
+        raise ValueError('Self-touching nested edge subdivisions')
+    return result
+
+
 def segment_count(r, span, full=False, epsilon=.0004, residual=0., bend=True):
     e = epsilon-residual
     if e <= 0 or r <= 0:

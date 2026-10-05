@@ -17,6 +17,8 @@ RECOVERABLE_PREFIXES = (
     "Protected non-manifold region changed",
     "Material boundary in planar patch", "Shading boundary in planar patch",
     "Region boundary branches or is open", "Non-simple boundary",
+    "Measured cylinder end contours", "Conflicting nested edge subdivisions",
+    "Self-touching nested edge subdivisions", "Cannot propagate subdivisions",
 )
 
 
@@ -70,6 +72,24 @@ def recover(features, operations, attempt, dispose, max_attempts=64, screen_atte
         if not is_geometric_conflict(error) or not active:
             raise
         first_error = error
+    supplemental=[f for f in features if f.get('measured_axis') and f['id'] in active]
+    supplemental_ids={f['id'] for f in supplemental}
+    established=[f for f in features if f['id'] not in supplemental_ids]
+    if supplemental and established and max_attempts-tries>=2:
+        # New proposals must not turn a previously reconstructable body into
+        # an all-protected dependency group. The first attempt above fully
+        # validates the extended set. On failure retry the established set,
+        # spending the SAME bounded recovery budget and reporting every omitted
+        # proposal. User-disabled operations and non-manifold protection remain
+        # enforced by the ordinary callback.
+        result,skipped,used=recover(established,operations,attempt,dispose,
+            max_attempts=max_attempts-tries,screen_attempt=screen_attempt,
+            preserve_curve_segmentation=preserve_curve_segmentation)
+        skipped.extend(dict(feature=f['id'],group='CAD_Skipped',
+            reason=f'Supplemental bend set failed: {first_error}; established features retried',
+            detected_not_reconstructed=True)
+            for f in supplemental)
+        return result,skipped,tries+used
     accepted = set()
     reasons = {}
     screen_attempt = screen_attempt or attempt

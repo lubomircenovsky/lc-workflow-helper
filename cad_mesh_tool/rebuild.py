@@ -4,7 +4,7 @@ from collections import Counter
 import numpy as np
 from mathutils import Vector
 from mathutils.geometry import delaunay_2d_cdt
-from .geometry import adjacency,face_normals,planar_regions,loops,basis,topology
+from .geometry import adjacency,face_normals,planar_regions,loops,basis,topology,measured_cylinder_ends,expanded_edge_chain
 
 
 def orient(a,b,c):
@@ -122,7 +122,11 @@ def _cylinder_rim_data(cy, p):
     angular_tolerance=max(1e-4,2e-6/cy['radius'])
     angle={i:float((math.atan2(p[i,1]-c[1],p[i,0]-c[0])-cy['start'])%(2*math.pi)) for i in bd}
     angle={i:0. if abs(t-2*math.pi)<1e-4 else t for i,t in angle.items()}
-    if cy['full']:
+    if cy.get('measured_end_contours'):
+        rings=measured_cylinder_ends(cy['boundary'],p,c,cy['radius'],cy['start'],cy['span'])
+        if rings is None:
+            raise ValueError('Measured cylinder end contours are no longer valid')
+    elif cy['full']:
         rings=[[i for i in bd if abs(p[i,2]-level)<1e-6] for level in (cy['lo'],cy['hi'])]
     else:
         graph={}
@@ -452,7 +456,25 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
                 if len(unique)<3:collapsed.append(fi);continue
                 if len(set(unique))!=len(unique):raise ValueError('Transition contraction creates a self-touching face')
                 p=np.array([vertices[i] for i in unique]);cr=np.cross(p[1:-1]-p[0],p[2:]-p[0]).sum(0)
-                if np.linalg.norm(cr)<2e-16:raise ValueError('Transition contraction creates a zero-area face')
+                if np.linalg.norm(cr)<2e-16:
+                    # A measured corner can contract a triangular transition
+                    # onto an exact line with a still-needed middle vertex.
+                    # Sew that vertex into the opposite edge; merely dropping
+                    # the triangle would introduce a T-junction. Never use this
+                    # for a tiny nonzero face or an unmeasured transition.
+                    if (len(unique)!=3 or np.any(cr!=0.) or
+                            not any(cy.get('measured_axis') for cy in attached)):
+                        raise ValueError('Transition contraction creates a zero-area face')
+                    axis=int(np.argmax(np.ptp(p,axis=0)))
+                    ordered=sorted(unique,key=lambda i:vertices[i][axis])
+                    a,middle,b=ordered
+                    if not vertices[a][axis]<vertices[middle][axis]<vertices[b][axis]:
+                        raise ValueError('Transition contraction creates coincident vertices')
+                    prior=split_edges.get((a,b),[a,b])
+                    chain=sorted(set(prior+ordered),key=lambda i:vertices[i][axis])
+                    split_edges[a,b]=chain;split_edges[b,a]=chain[::-1]
+                    collapsed.append(fi)
+                    continue
                 if cr@normals[fi]<=0:raise ValueError('Transition contraction flips a face')
                 add(unique,ns,'DETAIL_REBUILT','transition_'+str(gid),snapshot['materials'][fi]);new_faces.append(len(outfaces)-1)
             transitions.append(dict(patch=gid,old_faces=fs,new_faces=new_faces,contracted_faces=collapsed))
@@ -663,9 +685,11 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
     for fi in range(original_count):
         f=outfaces[fi]
         if not any((a,b) in split_edges for a,b in zip(f,f[1:]+f[:1])):continue
+        if roles[fi]=='LOCKED_FEATURE':
+            raise ValueError('Cannot propagate subdivisions into a protected feature')
         poly=[];ns=[]
         for k,(a,b) in enumerate(zip(f,f[1:]+f[:1])):
-            seq=split_edges.get((a,b),[a,b])
+            seq=expanded_edge_chain(split_edges,a,b)
             for j,vi in enumerate(seq[:-1]):
                 t=j/(len(seq)-1);nn=(1-t)*np.array(outnormals[fi][k])+t*np.array(outnormals[fi][(k+1)%len(f)])
                 poly.append(vi);ns.append(nn/max(np.linalg.norm(nn),1e-30))

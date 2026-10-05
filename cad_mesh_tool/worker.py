@@ -224,6 +224,13 @@ def main(root,state=None):
     (candidate,mesh,origin,validation),skipped,recovery_attempts=recover(
         discovery['features'],operations,attempt,dispose,screen_attempt=screen_attempt,
         preserve_curve_segmentation=preserve_curve_segmentation)
+    for item in skipped:
+        if item.get('detected_not_reconstructed'):
+            feature=next(f for f in discovery['features'] if f['id']==item['feature'])
+            candidate.setdefault('review_features',[]).append(dict(
+                id=feature['id'],category=feature['category'],group='CAD_Skipped',
+                reason=item['reason'],source_faces=feature['faces'],
+                source_vertices=feature['vertices'],detected_not_reconstructed=True))
     review_by_id={item['id']:item for item in candidate.get('review_features',[])
                   if item.get('group')=='CAD_Skipped' and item.get('id') is not None}
     for item in skipped:
