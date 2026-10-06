@@ -79,7 +79,7 @@ try:
     assert state.analysis_summary.startswith("1 mesh")
     print("CAD_UI_ANALYZE_OK", state.analysis_summary)
 
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:
+    with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         state.run_root = str(root)
         owned = root / ("b" * 32)

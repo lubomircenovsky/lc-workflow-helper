@@ -62,7 +62,7 @@ try:
             pass
         else:
             raise AssertionError(f"Accepted invalid normal limit: {invalid}")
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as root:
+    with tempfile.TemporaryDirectory() as root:
         state.run_root = root
         result = bpy.ops.lcw.cad_reconstruct()
         assert result == {"FINISHED"}, result
@@ -101,7 +101,7 @@ try:
     assert fail.name == "FAIL"
     assert fail in state.bindings[0].branch.children.values()
     assert fingerprint(cube) == before
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as root:
+    with tempfile.TemporaryDirectory() as root:
         state.run_root = root
         assert bpy.ops.lcw.cad_reconstruct() == {"FINISHED"}
         collection_row = state.results[-1]
@@ -112,7 +112,7 @@ try:
         assert fingerprint(cube) == before
         assert not any(obj.get("cad_checkpoint") for obj in bpy.data.objects)
         print("CAD_COLLECTION_RESULT", collection_row.status)
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as root:
+    with tempfile.TemporaryDirectory() as root:
         run_dir = Path(root) / "synthetic_pass"
         run_dir.mkdir()
         parent = bpy.data.objects.new("CAD Test Parent", None)
@@ -173,7 +173,7 @@ try:
     cube.select_set(True)
     singular.select_set(True)
     state.mode = "SELECTED"
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as root:
+    with tempfile.TemporaryDirectory() as root:
         state.run_root = root
         count = len(state.results)
         original_prepare = jobs.prepare_selected
@@ -199,7 +199,7 @@ try:
         assert fingerprint(singular) == singular_before
         assert fingerprint(cube) == before
         print("CAD_BATCH_FAILURE_ISOLATION_OK")
-    with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as root:
+    with tempfile.TemporaryDirectory() as root:
         count = len(state.results)
         batch = jobs.CADBatch(bpy.context, [cube], Path(root))
         assert batch.step()

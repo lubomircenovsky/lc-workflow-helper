@@ -24,7 +24,7 @@ class RunFileTests(unittest.TestCase):
             self.assertFalse(run_files.is_owned_run(root,path))
 
     def test_delete_only_verified_direct_child(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:
+        with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             root = base / "runs"
             root.mkdir()
@@ -51,7 +51,7 @@ class RunFileTests(unittest.TestCase):
             self.assertTrue(root.is_dir() and foreign.is_dir() and outside.is_dir())
 
     def test_wrong_marker_and_uuid_are_rejected(self):
-        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parents[2]) as directory:
+        with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             bad = root / ("e" * 32)
             bad.mkdir()
