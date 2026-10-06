@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import jobs, protection, status_overlay, ui_text
+from . import jobs, problem_select, protection, status_overlay, ui_text
 
 
 def _section(layout, state, property_name, label, icon):
@@ -262,5 +262,8 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             files.operator("lcw.cad_open_run", text="Run Files").result_index = index
             if item.status in {"FAIL", "REVIEW"}:
                 row.operator("lcw.cad_reconstruct", text="Retry").retry_index = index
+            if problem_select.can_select(item):
+                result_box.operator("lcw.cad_select_problems", text="Select Problem Areas",
+                                    icon="RESTRICT_SELECT_OFF").result_index = index
         if len(state.results) > state.results_visible:
             box.operator("lcw.cad_more_results", text="Show 5 More", icon="ADD")

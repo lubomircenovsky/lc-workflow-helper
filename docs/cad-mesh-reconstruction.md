@@ -56,6 +56,13 @@ The Reconstruction Options use two-column toggle buttons; hover each for its ful
 
 **Retry** starts a new run. The default normal check uses Blender-topology roundtrip calibration. Advanced Manual Normal Limit accepts any positive finite angle in degrees after risk acknowledgement. Above 0.05 degrees, shading may visibly change. This overrides only the straight-wall corner-normal limit; topology, intersection, deviation, and other geometry checks remain enabled. A higher limit cannot guarantee success. The chosen value is stored in the run profile and report.
 
+**Select Problem Areas** appears on a FAIL result whose cause can be shown on the source:
+
+- **Intersecting source surfaces** (stage `source_geometry`). The source opens in Edit Mode with exactly the faces whose triangles cross another triangle selected. They are read from the run's `validation_source.json`, so the run files must still exist. With Separate Solids, the faces are mapped back to the source object. If the source changed since the run (any geometry, transform, normal or attribute change), the stored indices no longer apply, the tool refuses, and you have to reconstruct again to refresh them.
+- **Open or non-manifold topology** (stage `preflight`). Open, wire and non-manifold edges and vertices, and inconsistent normals, are selected with Blender's Select Non-Manifold. Edges shared by more than two faces are skipped when the run allowed non-manifold junctions. Duplicate faces cannot be selected this way; use Merge by Distance.
+
+Only the selection changes; the mesh is never modified.
+
 ## Protected Regions
 
 The collapsed **Protected Regions** section marks faces that every reconstruction must keep exactly as authored. In Edit Mode select faces and use **Protect**; **Unprotect**, **Select** and **Clear** edit or inspect the marking. It is stored as the BOOLEAN face attribute `cad_protected` on the source mesh; geometry is never changed by these tools. Switch back to Object Mode before running.
