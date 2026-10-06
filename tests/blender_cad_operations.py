@@ -58,7 +58,7 @@ tight, attempts = choose_perimeter(hole, np.array([[-.01, -.01], [.01, -.01],
                                                    [.01, .01], [-.01, .01]]), [],
                                    radius=.0065, center=np.array([0., 0.]),
                                    preferred_clearance_m=.005)
-assert tight is not None and attempts[-1]['size'] < .0115
+assert tight is None  # Explicit clearance must not silently shrink to fit.
 
 for only_perimeter in (False, True):
     if only_perimeter:

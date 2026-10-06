@@ -418,7 +418,7 @@ def main(root,state=None):
            'The output passed geometry validation. Visual review is still required.', '',
            f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
            f"Preserve curve segmentation: {preserve_curve_segmentation}.",
-           f"Preferred perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm (0 = automatic).",
+           f"Perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm (0 = automatic; positive values are fixed).",
            f"Hole detail factor: {profile.get('hole_detail_factor',1.0):.2f}; hole deviation: {profile.get('hole_epsilon_mm',0.0):.3f} mm (0 = general limit).",
            f"Circular holes detected: {operation_results['circular_holes_detected']}.",
            f"Perimeter loops: {created_loops} created, {direct_joins} direct joins without a loop, "

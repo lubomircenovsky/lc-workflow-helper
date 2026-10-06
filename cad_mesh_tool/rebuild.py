@@ -52,6 +52,14 @@ def tessellation(boundaries):
 def annulus_quality(outer,inner):
     p,ff=tessellation([outer,inner])
     if len(ff)!=len(outer)+len(inner):return float('inf')
+    # Triangle count alone does not prove an annulus: near-collinear CDT
+    # diagonals can omit a boundary edge while duplicating an interior edge.
+    edges=Counter(tuple(sorted((a,b))) for f in ff for a,b in zip(f,f[1:]+f[:1]))
+    boundary={tuple(sorted((offset+i,offset+(i+1)%count)))
+              for offset,count in ((0,len(outer)),(len(outer),len(inner)))
+              for i in range(count)}
+    if {e for e,n in edges.items() if n==1}!=boundary or any(n not in (1,2) for n in edges.values()):
+        return float('inf')
     return max(max(np.sum((p[f[(i+1)%3]]-p[f[i]])**2) for i in range(3))/max(abs(orient(*p[f])),1e-30) for f in ff)
 
 
@@ -190,11 +198,11 @@ def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clea
     attempts=[]
     center=hole.mean(0) if center is None else center
     if radius and preferred_clearance_m:
-        clearances=[preferred_clearance_m*factor for factor in (1.0, .75, .5, .25)]
-        clearances.extend(value for value in (.002, .001, .0005, .00025) if value<preferred_clearance_m)
-        sizes=list(dict.fromkeys(radius+value for value in sorted(clearances,reverse=True)))
+        # A nonzero user value is a constraint, not a hint to silently shrink.
+        sizes=[radius+preferred_clearance_m]
     else:
         sizes=list(dict.fromkeys([max(radius+max(.002,.25*radius),.008),radius+max(.002,.25*radius),radius+max(.002,.125*radius),radius+.002,radius+.001,radius+.0005,radius+.00025])) if radius else [None]
+    squares=[]
     for size in sizes:
         for degree in [0,15,30,45,60,75]:
             a=math.radians(degree);rot=np.array([[math.cos(a),-math.sin(a)],[math.sin(a),math.cos(a)]])
@@ -209,12 +217,26 @@ def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clea
             elif any(contacts(corners,o) or any(inside(p,corners) for p in o) or inside(corners[0],o) for o in obstacles):reason='other_feature'
             if reason:
                 attempts.append(dict(degree=degree,size=size,rejected=reason));continue
+            if radius:
+                squares.append((corners,degree,size))
+                continue
             for divisions in ([1,2,4,8,16] if radius else [1,2,4,8,16,32,64]):
                 sq=np.array([p+(q-p)*k/divisions for p,q in zip(corners,np.roll(corners,-1,axis=0)) for k in range(divisions)])
                 q=annulus_quality(sq,hole)
-                attempts.append(dict(degree=degree,size=size,divisions=divisions,q=q))
+                attempts.append(dict(degree=degree,size=size,divisions=divisions,q=q if math.isfinite(q) else None))
                 if q<=20:return sq,attempts
     if radius:
+        # Rank vertex count before clearance/rotation. Auto may use a wider
+        # support; explicit clearance uses exactly one size. Keep the existing
+        # maximum subdivision and all containment/triangle quality checks.
+        for divisions in (1,2,3,4,6,8,12,16):
+            for corners,degree,size in squares:
+                sq=np.array([p+(q-p)*k/divisions for p,q in zip(corners,np.roll(corners,-1,axis=0)) for k in range(divisions)])
+                q=annulus_quality(sq,hole)
+                attempts.append(dict(degree=degree,size=size,divisions=divisions,q=q if math.isfinite(q) else None))
+                if q<=20:
+                    attempts[-1]['vertices']=len(sq)
+                    return sq,attempts
         # A contour-following ring needs less room at rounded/narrow borders
         # than a square. Keep the same clearance candidates and quality gate.
         for size in sizes:
@@ -226,7 +248,7 @@ def choose_perimeter(hole,outer,obstacles,radius=None,center=None,preferred_clea
             if reason:
                 attempts.append(dict(shape='contour',size=size,rejected=reason));continue
             q=annulus_quality(contour,hole)
-            attempts.append(dict(shape='contour',size=size,q=q))
+            attempts.append(dict(shape='contour',size=size,q=q if math.isfinite(q) else None))
             if q<=20:return contour,attempts
     else:
         # Offset an irregular cutout's measured contour. Reject folds, contacts
@@ -480,7 +502,10 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
             transitions.append(dict(patch=gid,old_faces=fs,new_faces=new_faces,contracted_faces=collapsed))
             continue
         if max(abs((V[ids]-origin)@normal))>1e-6:raise ValueError('Unsupported nonplanar incident patch')
-        def uv(i):return ((np.array(vertices[i])-origin)@frame.T)[:2]
+        support_uv={}
+        def uv(i):
+            if i in support_uv:return support_uv[i]
+            return ((np.array(vertices[i])-origin)@frame.T)[:2]
         def area(ring):return sum(orient(np.zeros(2),uv(a),uv(b)) for a,b in zip(ring,ring[1:]+ring[:1]))/2
         oldloops=boundary_loops;newloops=[]
         for ring in oldloops:
@@ -585,6 +610,10 @@ def reconstruct(snapshot,features,operations=None,protection=None,preserve_curve
                 processed.add(frozenset(old))
                 continue
             square=[point(origin+x[0]*frame[0]+x[1]*frame[1]) for x in sq]
+            # Tessellate generated supports in their original plane coordinates.
+            # A 2D -> world -> 2D round trip bends a straight side by roundoff,
+            # allowing CDT to emit a spurious near-zero triangle on that side.
+            support_uv.update(zip(square,sq))
             outside.append(square);annuli.append((square,ring));squares.append(sq)
             layout=attempts[-1] if sparse is not None else None
             layouts.append(layout);ids_all=square+ring
