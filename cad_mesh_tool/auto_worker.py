@@ -175,13 +175,17 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
 
     def launch(order, label, operations, preserve, slot):
         nonlocal prepared_path
-        if prepared_path is None:
-            prepared_path = body_root/'prepared.pkl'
-            body_root.mkdir(parents=True, exist_ok=True)
-            with prepared_path.open('wb') as stream:pickle.dump(prepared, stream)
-        directory = prepare_directory(order, label, operations, preserve,
-                                      dict(prepared_path=str(prepared_path)))
+        # Everything between claiming the slot and registering the child is
+        # inside one guard: a failed directory, profile, pickle, log or start
+        # releases the slot before the error propagates.
         try:
+            if prepared_path is None:
+                path = body_root/'prepared.pkl'
+                body_root.mkdir(parents=True, exist_ok=True)
+                with path.open('wb') as stream:pickle.dump(prepared, stream)
+                prepared_path = path
+            directory = prepare_directory(order, label, operations, preserve,
+                                          dict(prepared_path=str(prepared_path)))
             with (directory/'worker.log').open('w', encoding='utf8') as log:
                 # Variants stay in this worker's process group, so stopping
                 # the Auto worker's tree also stops them.

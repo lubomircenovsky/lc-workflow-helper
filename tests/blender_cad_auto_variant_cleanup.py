@@ -141,4 +141,44 @@ with patch.object(auto_worker.subprocess, 'Popen', popen_fails_second):
 body = json.loads((run / 'auto_manifest.json').read_text())['bodies'][0]
 assert body['status'] == 'FAIL' and 'Injected start failure' in body['reason'], body
 check_clean(root, slots, 'main')
+
+# 4) / 5) Preparing the second variant fails after its slot was claimed:
+#    the profile cannot be written, or its directory cannot be created.
+original_write, original_mkdir = Path.write_text, Path.mkdir
+
+
+def failing(kind):
+    calls = {'n': 0}
+
+    def write_text(path, *args, **kwargs):
+        if kind == 'profile' and path.name == 'profile.json':
+            calls['n'] += 1
+            if calls['n'] == 2:
+                raise OSError('Injected profile write failure')
+        return original_write(path, *args, **kwargs)
+
+    def mkdir(path, *args, **kwargs):
+        if kind == 'mkdir' and path.parent.name.startswith('solid_'):
+            calls['n'] += 1
+            if calls['n'] == 2:
+                raise OSError('Injected mkdir failure')
+        return original_mkdir(path, *args, **kwargs)
+
+    return write_text, mkdir
+
+
+for kind in ('profile', 'mkdir'):
+    started = []
+    root, slots, profile = setup()
+    write_text, mkdir = failing(kind)
+    with patch.object(auto_worker.subprocess, 'Popen', popen_first_finishes), \
+            patch.object(Path, 'write_text', write_text), patch.object(Path, 'mkdir', mkdir):
+        try:
+            auto_worker.process_body(root, source, profile, 0, partition)
+        except OSError as error:
+            assert 'Injected' in str(error), error
+        else:
+            raise AssertionError(f'{kind} failure was swallowed')
+    assert len(started) == 1, f'{kind}: only the first variant started'
+    check_clean(root, slots, kind)
 print('PASS blender_cad_auto_variant_cleanup')
