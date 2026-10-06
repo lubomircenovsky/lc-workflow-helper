@@ -112,6 +112,17 @@ try:
     with bpy.context.temp_override(area=area):
         LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(calls, icons)), bpy.context)
     assert any(c[0:2] == ('prop', 'worker_timeout_minutes') for c in calls)
+    assert any(c[0:2] == ('prop', 'auto_objective') for c in calls)
+    for objective in ('LIGHTWEIGHT', 'EDITABLE'):
+        state.auto_objective = objective
+        state.protection_section_open = True
+        calls=[]
+        with bpy.context.temp_override(area=area):
+            LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(calls, icons)), bpy.context)
+        protect = [c for c in calls if c[:2] == ('operator', 'lcw.cad_protect_faces')]
+        assert len(protect) == 4, protect
+        assert any('protected face' in c[1] for c in calls if c[0] == 'label')
+        assert any(objective.title() in c[1] for c in calls if c[0] == 'label')
     print('CAD_PANEL_DRAW_RNA_BRANCHES_OK')
 finally:
     addon.unregister()

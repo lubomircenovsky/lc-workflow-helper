@@ -1,6 +1,6 @@
 # LC Workflow helper
 
-`LC Workflow helper` is a Blender 4.2 LTS Extension add-on focused on day-to-day production helpers for LC workflows.
+`LC Workflow helper` is a Blender 5.2 LTS Extension add-on focused on day-to-day production helpers for LC workflows. Blender 5.2.0 is the minimum supported version.
 
 The add-on groups tools into practical N-panel categories:
 
@@ -12,6 +12,7 @@ The add-on groups tools into practical N-panel categories:
 - `Workflow Presets`
 - `Kalibra Tools`
 - `Quad Reconstruction`
+- `CAD Mesh Reconstruction`
 - `GN Library`
 
 ## Current Scope
@@ -21,19 +22,19 @@ The extension provides:
 - modular operators instead of one monolithic script
 - session-only panel inputs for per-tool parameters
 - workflow presets stored in each `.blend` file
-- color picker based vertex color tools using Blender 4.2 `color_attributes`
+- color picker based vertex color tools using `color_attributes`
 - file path inputs instead of hardcoded export paths
 - deterministic batch quad reconstruction for triangulated and mixed meshes
 - bundled Geometry Nodes groups that can be appended to the current `.blend` file
 
-The GN Library initially includes `GN_Screw_Replace_By_Geometry`. Its asset requires Blender 5.2 or newer; the rest of the extension keeps its Blender 4.2 minimum. The source collection and replacement object are assigned in the Geometry Nodes modifier after insertion.
+The GN Library initially includes `GN_Screw_Replace_By_Geometry`. The source collection and replacement object are assigned in the Geometry Nodes modifier after insertion.
 
 ## Installation
 
 ### From a packaged `.zip`
 
 1. Build the extension package.
-2. In Blender 4.2, open `Edit > Preferences > Extensions`.
+2. In Blender 5.2 LTS, open `Edit > Preferences > Extensions`.
 3. Use `Install from Disk`.
 4. Select the generated `.zip` package.
 5. Enable `LC Workflow helper`.
@@ -73,7 +74,7 @@ Manual persistence check:
 
 ## Development Notes
 
-- Target Blender version: `4.2 LTS`
+- Target Blender version: `5.2 LTS` (minimum 5.2.0)
 - Main UI location: `3D View > N-panel > LC Workflow`
 - Project-specific tools remain isolated in `Kalibra Tools`
 - Workflow presets are stored in the current `.blend` file via scene state
@@ -90,13 +91,24 @@ See:
 - `docs/quad-reconstruction-benchmarks.md`
 - `quad_reconstruction/matching/DECISION.md`
 
+## CAD Mesh Reconstruction
+
+Simplifies triangulated CAD exports (mainly sheet-metal machine cladding) into lighter, editable meshes: circular holes, arcs and outer cylinders are re-sampled analytically, flat areas become n-gons, and every candidate is validated against the untouched source (topology, intersections, sampled deviation). Work runs in separate background Blender processes; the source object is never modified and nothing is saved automatically.
+
+- **Auto** compares up to four validated variants per solid. Objective **Lightweight** keeps the fewest triangles; **Editable** keeps more reconstructed regions and support loops around holes.
+- **Power user** exposes the individual operations.
+- **Protected Regions** (Edit Mode) marks faces that must stay exactly as authored.
+- **UV Preparation** builds a packed UV map for the selected meshes.
+
+Details, guarantees and limits: `docs/cad-mesh-reconstruction.md`.
+
 ## Validation Status
 
 Automated validation completed:
 
 - Python modules compile successfully
 - pure-core unit tests pass
-- registration, reconstruction, safety and validation fixtures pass in Blender 4.5.8 and 5.2.0 LTS
+- registration, reconstruction, safety and validation fixtures pass in Blender 5.2.1 LTS
 - the extension manifest and packaged ZIP validate successfully
 
 Manual UI validation remains useful for:

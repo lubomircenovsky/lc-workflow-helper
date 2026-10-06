@@ -2,10 +2,10 @@ from __future__ import annotations
 
 
 def non_ui_classes():
-    from . import operators, result_actions, settings, uv_prep
+    from . import operators, protection, result_actions, settings, uv_prep
 
     return (*settings.CLASSES, *operators.CLASSES, *result_actions.CLASSES,
-            *uv_prep.CLASSES)
+            *uv_prep.CLASSES, *protection.CLASSES)
 
 
 def register_properties():

@@ -165,6 +165,9 @@ auto_worker.main(Path(sys.argv[sys.argv.index('--')+1]))
         changed._finish_worker(0)
         assert len(bpy.data.objects)==output_count
         new_rows=list(state.results)[count:]
-        assert all(r.status=='FAIL' and not r.output for r in new_rows)
+        # The source's second solid is a separate queued work item that never started.
+        assert not any(r.output for r in new_rows)
+        started=[r for r in new_rows if r.status!='PENDING']
+        assert started and all(r.status=='FAIL' for r in started),[(r.status,r.reason) for r in new_rows]
     print('CAD_AUTO_INTEGRATION_OK')
 finally:addon.unregister()

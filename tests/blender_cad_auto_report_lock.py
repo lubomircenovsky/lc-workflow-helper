@@ -33,7 +33,7 @@ try:
 
         def prepared():
             batch = auto_jobs.AutoBatch(bpy.context, [source, source], root)
-            batch.next_index = 1
+            batch.queue.popleft()  # item 0 is the running job below
             job = dict(index=0, process=SimpleNamespace(poll=lambda: 0),
                        log=io.StringIO(), run_dir=root, imported=set(),
                        source_hash=before, log_position=0, phase='Done',

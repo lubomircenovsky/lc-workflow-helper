@@ -50,6 +50,7 @@ class LCW_PG_CADAnalysisLine(bpy.types.PropertyGroup):
 class LCW_PG_CADState(bpy.types.PropertyGroup):
     workflow_mode: EnumProperty(name="Workflow", items=(("AUTO", "Auto", "Analyze and choose validated variants automatically"), ("POWER_USER", "Power user", "Choose reconstruction operations manually")), default="AUTO")
     workflow_schema: IntProperty(default=0, options={"HIDDEN"})
+    auto_objective: EnumProperty(name="Objective", items=(("LIGHTWEIGHT", "Lightweight", "Choose the validated variant with the fewest triangles; support loops may be omitted"), ("EDITABLE", "Editable", "Prefer reconstructing more regions and keeping support loops around holes; triangle count decides only ties")), default="LIGHTWEIGHT")
     auto_hole_detail_factor: FloatProperty(name="Hole Detail", default=1.0, min=0.1, max=2.0, precision=2)
     auto_perimeter_clearance_mm: FloatProperty(name="Perimeter Clearance (mm)", description="Nominal circular-hole support clearance; 0 = choose clearance automatically to reduce loop vertices; a positive value is kept", default=0.0, min=0.0, precision=2)
     auto_epsilon_mm: FloatProperty(name="Deviation Limit (mm)", default=0.4, min=0.000001)
@@ -102,6 +103,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     run_section_open: BoolProperty(name="Run", default=True)
     results_section_open: BoolProperty(name="Results", default=True)
     uv_prep_section_open: BoolProperty(name="UV Preparation", default=False)
+    protection_section_open: BoolProperty(name="Protected Regions", default=False)
 
 
 CLASSES = (LCW_PG_CADResult, LCW_PG_CADCollectionBinding,

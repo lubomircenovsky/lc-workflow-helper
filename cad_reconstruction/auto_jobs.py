@@ -1,5 +1,12 @@
-"""Auto batch adapter: light live capture, external planning and incremental import."""
+"""Auto batch adapter: light live capture, external planning and incremental import.
+
+Each independent solid of a multi-solid source runs in its own worker process
+(the worker's retry_component path), so large assemblies use every worker slot
+instead of processing their solids one after another in a single process.
+"""
+import collections
 import json
+import shutil
 import math
 import os
 import subprocess
@@ -11,8 +18,9 @@ from pathlib import Path
 import bpy
 from ..cad_mesh_tool import __version__
 from ..cad_mesh_tool.api import code_hash
-from ..cad_mesh_tool.auto_policy import completed_bodies
+from ..cad_mesh_tool.auto_policy import completed_bodies, objective_name
 from ..cad_mesh_tool.mesh_io import capture, fingerprint
+from ..cad_mesh_tool.solids import solid_partitions
 from . import jobs
 
 
@@ -26,6 +34,7 @@ def settings(state):
         raise ValueError('Invalid Auto deviation or hole detail')
     if min(values['hole_epsilon_mm'], values['perimeter_clearance_mm']) < 0:
         raise ValueError('Auto clearances and hole deviation must not be negative')
+    values['auto_objective'] = objective_name(getattr(state, 'auto_objective', 'LIGHTWEIGHT'))
     return values
 
 
@@ -38,6 +47,16 @@ def run_root(state):
 
 
 class AutoBatch(jobs.CADBatch):
+    """Modal Auto batch over work items.
+
+    A work item is one source object, or one solid of a multi-solid source.
+    Items start as one per object; when an object is captured and has several
+    independent solids, it expands into one item per solid. All solid items of
+    an object share one immutable source.json (hard link where possible) and
+    the worker processes only its ``retry_component``; partitions are computed
+    from the same captured snapshot the worker reads, so indices agree.
+    """
+
     def __init__(self, context, objects, root, retry_component=None):
         self.scene = context.scene
         state = self.scene.lcw_cad_reconstruction
@@ -47,7 +66,7 @@ class AutoBatch(jobs.CADBatch):
         self.retry_component = retry_component
         self.max_workers = min(max(int(state.concurrent_workers), 1), 16)
         self.timeout_seconds = jobs.worker_timeout_seconds(state)
-        self.next_index = self.completed = 0
+        self.completed = 0
         self.running = {}
         self.cancelled = False
         self.row_offset = len(state.results)
@@ -55,32 +74,87 @@ class AutoBatch(jobs.CADBatch):
         self.scene.collection.children.link(parent)
         # SELECTED routes directly to this fresh destination through _destination.
         self.routing = dict(mode='AUTO', input=None, output=parent)
-        for source in self.objects:
+        self.items = []
+        for index, source in enumerate(self.objects):
             row = state.results.add()
             row.source = source
             row.source_label = source.name
             row.execution_mode = 'AUTO'
             row.status = 'PENDING'
             row.stage = 'Queued'
+            self.items.append(dict(object=index, component=retry_component, row=self.row_offset+index,
+                                   snapshot=None, imported=set()))
+        self.queue = collections.deque(range(len(self.items)))
 
-    def _start_worker(self, index):
-        source = self.objects[index]
-        row = self._row(index)
+    @property
+    def next_index(self):
+        # Base-class compatibility: number of items already started.
+        return len(self.items)-len(self.queue)
+
+    def _row(self, item_id):
+        return self.scene.lcw_cad_reconstruction.results[self.items[item_id]['row']]
+
+    def _expand(self, item_id, snapshot, source_hash):
+        """Split a captured multi-solid source into per-solid work items."""
+        item = self.items[item_id]
+        partitions = solid_partitions(snapshot['faces'], snapshot['vertices'])
+        if len(partitions) < 2:
+            return
+        shared = self.root/uuid.uuid4().hex
+        shared.mkdir()
+        (shared/'source.json').write_text(json.dumps(snapshot), encoding='utf8')
+        (shared/'SHARED_SOURCE').write_text('Immutable source shared by per-solid Auto runs\n', encoding='utf8')
+        state = self.scene.lcw_cad_reconstruction
+        source = self.objects[item['object']]
+        item.update(component=0, snapshot=shared, source_hash=source_hash)
+        self._row(item_id).source_label = f'{source.name} / Solid 1'
+        children = []
+        for component in range(1, len(partitions)):
+            row = state.results.add()
+            row.source = source
+            row.source_label = f'{source.name} / Solid {component+1}'
+            row.execution_mode = 'AUTO'
+            row.status = 'PENDING'
+            row.stage = 'Queued'
+            self.items.append(dict(object=item['object'], component=component, row=len(state.results)-1,
+                                   snapshot=shared, source_hash=source_hash, imported=set()))
+            children.append(len(self.items)-1)
+        # Run the remaining solids of this object next, keeping objects compact.
+        self.queue.extendleft(reversed(children))
+
+    def _start_worker(self, item_id):
+        item = self.items[item_id]
+        source = self.objects[item['object']]
+        row = self._row(item_id)
         directory = self.root/uuid.uuid4().hex
         row.auto_run_dir = row.run_dir = str(directory)
         row.status = 'RUNNING'
         log = None
         try:
-            issues = jobs.preflight_object(source, check_topology=False)
-            if issues:raise ValueError('; '.join(issues))
-            snapshot = capture(source, check_topology=False)
+            if item['snapshot'] is None:
+                issues = jobs.preflight_object(source, check_topology=False)
+                if issues:raise ValueError('; '.join(issues))
+                snapshot = capture(source, check_topology=False)
+                source_hash = snapshot['source_hash']
+                if self.retry_component is None:
+                    self._expand(item_id, snapshot, source_hash)
+            else:
+                snapshot = None
+                source_hash = item['source_hash']
+                if fingerprint(source) != source_hash:
+                    raise ValueError('Source changed during Auto run')
             directory.mkdir()
+            if item['snapshot'] is None:
+                (directory/'source.json').write_text(json.dumps(snapshot), encoding='utf8')
+            else:
+                try:os.link(item['snapshot']/'source.json', directory/'source.json')
+                except OSError:shutil.copy2(item['snapshot']/'source.json', directory/'source.json')
             profile = dict(self.controls, method='CAD_AUTO', delivery='CAD_AUTO_VARIANTS',
-                           source_name=source.name, source_hash=snapshot['source_hash'],
+                           source_name=source.name, source_hash=source_hash,
                            code_hash=code_hash(), tool_version=__version__, sample_count=20000,
-                           unit_scale=snapshot['unit_scale'], retry_component=self.retry_component,
+                           unit_scale=bpy.context.scene.unit_settings.scale_length,
+                           retry_component=item['component'],
                            worker_timeout_minutes=self.timeout_seconds / 60)
-            (directory/'source.json').write_text(json.dumps(snapshot), encoding='utf8')
             (directory/'profile.json').write_text(json.dumps(profile, indent=2), encoding='utf8')
             log = (directory/'worker.log').open('w', encoding='utf8')
             worker = Path(__file__).resolve().parents[1]/'cad_mesh_tool/auto_worker.py'
@@ -88,9 +162,9 @@ class AutoBatch(jobs.CADBatch):
                 '--python-exit-code', '1', '--python', str(worker), '--', str(directory)],
                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-            self.running[index] = dict(index=index, process=process, log=log, run_dir=directory,
-                log_position=0, phase='Analyzing solids', source_hash=snapshot['source_hash'],
-                started=time.perf_counter(), imported=set())
+            self.running[item_id] = dict(index=item_id, process=process, log=log, run_dir=directory,
+                log_position=0, phase='Analyzing solids', source_hash=source_hash,
+                started=time.perf_counter(), imported=item['imported'])
         except Exception as error:
             if log:log.close()
             row.status = 'FAIL';row.reason = str(error);row.stage = 'Auto preparation'
@@ -104,13 +178,13 @@ class AutoBatch(jobs.CADBatch):
         if report['source_hash'] != job['source_hash'] or report['code_hash'] != code_hash():
             raise ValueError('Auto report source or implementation changed')
         state = self.scene.lcw_cad_reconstruction
-        source = self.objects[index]
+        source = self.objects[self.items[index]['object']]
         for item in completed_bodies(report, job.get('timed_out', False),
                                      job.get('interrupted_reason'),
                                      include_unfinished=not job.get('cancelled', False)):
             component = item['component_index']
             if component in job['imported']:continue
-            row_index = self.row_offset+index if not job['imported'] else len(state.results)
+            row_index = self.items[index]['row'] if not job['imported'] else len(state.results)
             if row_index == len(state.results):state.results.add()
             row = state.results[row_index]
             output = None;manifest = {};status = item['status'];reason = item['reason']
@@ -158,7 +232,7 @@ class AutoBatch(jobs.CADBatch):
             # bodies and isolate a persistent file-access failure to this item.
             state = self.scene.lcw_cad_reconstruction
             row = state.results.add() if job['imported'] else self._row(index)
-            row.source = self.objects[index];row.source_label = row.source.name
+            row.source = self.objects[self.items[index]['object']];row.source_label = self._row(index).source_label or row.source.name
             row.execution_mode = 'AUTO';row.status = 'FAIL';row.stage = 'Auto report'
             row.auto_run_dir = row.run_dir = str(job['run_dir'])
             row.reason = f'Auto report remained inaccessible; completed results preserved: {error}'
@@ -177,7 +251,7 @@ class AutoBatch(jobs.CADBatch):
         if not job['imported']:
             state = self.scene.lcw_cad_reconstruction
             row = self._row(index) if not job['imported'] else state.results.add()
-            row.source = self.objects[index];row.source_label = row.source.name
+            row.source = self.objects[self.items[index]['object']];row.source_label = self._row(index).source_label or row.source.name
             row.execution_mode = 'AUTO';row.status = 'FAIL';row.stage = 'Auto worker'
             row.auto_run_dir = row.run_dir = str(job['run_dir'])
             failure = job['run_dir']/'failure.json'
@@ -201,4 +275,43 @@ class AutoBatch(jobs.CADBatch):
             job['interrupted_reason'] = 'Cancelled by user'
             try:self._import_completed(index)
             except (OSError, ValueError):pass
-        super().cancel()
+        self.cancelled = True
+        for job in self.running.values():
+            job['log'].close()
+        self.running.clear()
+        self.queue.clear()
+        state = self.scene.lcw_cad_reconstruction
+        rows = state.results
+        for row_index in sorted({item['row'] for item in self.items}, reverse=True):
+            if row_index < len(rows) and rows[row_index].status in {'PENDING', 'RUNNING'}:
+                rows.remove(row_index)
+        state.active_result = min(max(state.active_result, 0), max(len(rows) - 1, 0))
+        state.progress = 'Cancelled; completed results preserved'
+
+    def _progress(self):
+        phases = ', '.join(f"{self._row(i).source_label}: {job['phase']}"
+                           for i, job in sorted(self.running.items()))
+        self.scene.lcw_cad_reconstruction.progress = (
+            f'Queued {len(self.queue)} | Running {len(self.running)} | Done {self.completed}'
+            + (f' | {phases}' if phases else ''))
+
+    def step(self):
+        state = self.scene.lcw_cad_reconstruction
+        if self.cancelled:
+            return False
+        self._stop_expired_workers()
+        for index, job in sorted(self.running.items()):
+            if job['process'].poll() is not None:
+                self._finish_worker(index)
+                self._progress()
+                return True
+            self._read_worker_progress(job)
+        if self.queue and len(self.running) < self.max_workers:
+            self._start_worker(self.queue.popleft())
+            self._progress()
+            return True
+        if not self.running and not self.queue:
+            state.progress = f'Complete: {len(self.items)} CAD work item(s)'
+            return False
+        self._progress()
+        return True

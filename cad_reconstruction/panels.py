@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import jobs, status_overlay, ui_text
+from . import jobs, protection, status_overlay, ui_text
 
 
 def _section(layout, state, property_name, label, icon):
@@ -48,15 +48,40 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                 controls.label(text=f"Selected mesh objects: {count}", icon="OUTLINER_OB_MESH")
             if not auto:controls.prop(state, "run_root")
 
+        box = _section(layout, state, "protection_section_open", "Protected Regions", "LOCKED")
+        if box is not None:
+            obj = context.active_object
+            count = protection.protected_count(obj)
+            if count is None:
+                box.label(text="Select a mesh object.", icon="INFO")
+            else:
+                box.label(text=f"{obj.name}: {count} protected face(s)", icon="LOCKED")
+            if obj is None or obj.mode != "EDIT":
+                box.label(text="Edit Mode: select faces, then Protect.", icon="INFO")
+            actions = box.column(align=True)
+            actions.enabled = not busy
+            row = actions.row(align=True)
+            row.operator("lcw.cad_protect_faces", text="Protect", icon="LOCKED").action = "PROTECT"
+            row.operator("lcw.cad_protect_faces", text="Unprotect", icon="UNLOCKED").action = "UNPROTECT"
+            row = actions.row(align=True)
+            row.operator("lcw.cad_protect_faces", text="Select", icon="RESTRICT_SELECT_OFF").action = "SELECT"
+            row.operator("lcw.cad_protect_faces", text="Clear", icon="X").action = "CLEAR"
+            for line in ui_text.lines("Protected faces and features touching them stay exactly as authored."):
+                box.label(text=line, icon="INFO")
+
         if auto:
             box = layout.box()
             controls = box.column(align=True)
             controls.enabled = not busy
+            controls.row(align=True).prop(state, "auto_objective", expand=True)
             controls.prop(state, "auto_hole_detail_factor", slider=True)
             controls.prop(state, "auto_perimeter_clearance_mm")
             controls.prop(state, "auto_epsilon_mm")
             controls.prop(state, "auto_hole_epsilon_mm")
-            for line in ui_text.lines("Auto chooses fewer polygons; support loops may be omitted."):
+            hint = ("Editable keeps more regions and support loops; triangles decide ties."
+                    if state.auto_objective == "EDITABLE" else
+                    "Lightweight chooses fewer triangles; support loops may be omitted.")
+            for line in ui_text.lines(hint):
                 box.label(text=line, icon="INFO")
         else:
             box = _section(layout, state, "options_section_open", "Reconstruction Options", "MOD_REMESH")
