@@ -12,7 +12,7 @@ from cad_mesh_tool.geometry import topology
 from cad_mesh_tool.intersections import intersections
 from cad_mesh_tool.nonmanifold import protection
 from cad_mesh_tool.recovery import decisions, is_geometric_conflict
-from cad_mesh_tool.solids import components, solid_partitions
+from cad_mesh_tool.solids import components, extract_component, solid_partitions
 from cad_mesh_tool.worker import validated_candidate
 import bpy
 
@@ -45,6 +45,7 @@ def analyze(source, profile):
         cross = sum(not owner[h['a']].intersection(owner[h['b']]) for h in hits['intersections'])
         internal_solids={index for h in hits['intersections']
                          for index in owner[h['a']].intersection(owner[h['b']])}
+        result['internal_solid_indices']=sorted(internal_solids)
         eligible_solids=len(groups)-len(internal_solids)
         result.update(cross_solid_intersections=cross,
                       internal_intersections=len(hits['intersections'])-cross,
@@ -57,58 +58,114 @@ def analyze(source, profile):
         if cross and eligible_solids:
             result['recommendation'] = {'separate_solids': True}
     else:
-        from cad_mesh_tool.source_repair import repair_collinear_faces
-        original_source = source
-        try:
-            source, source_repair = repair_collinear_faces(source)
-        except ValueError as error:
-            result.update(blocked=True, summary=str(error), seconds=time.perf_counter()-started)
-            return result
-        result['source_repair'] = source_repair
-        print('DISCOVER', flush=True)
-        plan = discover(source['vertices'], source['faces'], profile['epsilon_m'],
-                        profile.get('hole_detail_factor', 1.),
-                        (profile.get('hole_epsilon_mm', 0.)/1000) or None)
-        result['categories'] = dict(Counter(f['category'] for f in plan['features']))
-        result['holes'] = [{'id': f['id'], 'before': f['segments_before'], 'target': f['segments']}
-                           for f in plan['features'] if f['category'] == 'circular_hole']
-        locked = protection(source, plan['features']) if counts['nonmanifold'] else None
-        if locked:
-            for feature in plan['features']:
-                if feature['id'] in locked['features']:
-                    feature['forced_skip_reason'] = 'Touches an unchanged source non-manifold junction'
-        current = dict(profile['operations'])
-        choices = [('Current options', current, profile.get('preserve_curve_segmentation', False))]
-        if result['holes'] and (current['arcs'] or current['outer_cylinders']):
-            holes = dict(current, circular_holes=True, arcs=False, outer_cylinders=False)
-            choices.extend([('Holes only; keep bends', holes, False),
-                            ('Holes without support loops', dict(holes, perimeter_loops=False), False)])
-        if result['holes']:
-            choices.append(('Keep curve segments', dict(current, perimeter_loops=True), True))
-        for label, options, preserve in choices[:4]:
-            screening = dict(profile, sample_count=750, preserve_curve_segmentation=preserve)
-            selected = decisions(plan['features'], options, preserve_curve_segmentation=preserve)
-            try:
-                print('SCREEN', label, flush=True)
-                candidate, mesh, origin, checked = validated_candidate(source, selected, options, screening, locked,
-                                                                       validation_source=original_source)
-            except ValueError as error:
-                if not is_geometric_conflict(error):
-                    raise
-                result['trials'].append({'label': label, 'error': str(error)})
-            else:
-                bpy.data.meshes.remove(mesh)
-                result['trials'].append({'label': label, 'checks': checked['checks'],
-                                        'triangles': checked['after']['t']})
-                result['recommendation'] = dict(options, preserve_curve_segmentation=preserve)
-                result['summary'] = (f"{label} passed checkpoint screening (750 area samples plus vertices, edges and centroids). "
-                                     'Reconstruct still performs full validation and cleanup.')
-                break
-        if result['recommendation'] is None:
-            result['summary'] = 'No screened profile passed. Inspect trial errors; repair dependent boundaries or run a smaller operation set.'
         result['blocked'] = False
+    # Screen what Reconstruct will actually process: each intersection-free
+    # solid when Separate Solids is on (or recommended), otherwise the source.
+    if not result.get('blocked') or result.get('recommendation') == {'separate_solids': True}:
+        split = len(partitions) > 1 and (profile.get('separate_solids') or result.get('recommendation'))
+        targets = []
+        if split:
+            clean = set(range(len(partitions))) - set(result.get('internal_solid_indices', ()))
+            for index in sorted(clean):
+                part = partitions[index]
+                body = extract_component(source, part['faces'], part['reversed_faces'])
+                targets.append((index, body, bool(topology(body['faces'])['nonmanifold'])))
+        elif not hits['intersections']:
+            targets.append((None, source, bool(counts['nonmanifold'])))
+        result['solid_screens'] = []
+        for index, body, guarded in targets:
+            outcome = screen(body, profile, guarded)
+            outcome['solid'] = index
+            result['solid_screens'].append(outcome)
+        if targets:
+            result['trials'] = [dict(trial, solid=item['solid']) for item in result['solid_screens'] for trial in item['trials']]
+            result['user_protected_faces'] = sum(item.get('user_protected_faces', 0) for item in result['solid_screens'])
+            passed = [item for item in result['solid_screens'] if item.get('recommendation')]
+            failed = [item for item in result['solid_screens'] if not item.get('recommendation')]
+            if passed:
+                # One shared control set: the profile passing for most solids.
+                votes = Counter(json.dumps(item['recommendation'], sort_keys=True) for item in passed)
+                best = json.loads(votes.most_common(1)[0][0])
+                if split:best['separate_solids'] = True
+                result['recommendation'] = best
+            elif not split:
+                result['recommendation'] = None
+            if split:
+                result['summary'] = (result.get('summary', '') + ' ' if result.get('summary') else '') + (
+                    f"Screened {len(targets)} solid(s): {len(passed)} passed, {len(failed)} without a passing profile. "
+                    'Reconstruct still performs full validation and cleanup.')
+            elif passed:
+                result['summary'] = (f"{passed[0]['passed']} passed checkpoint screening (750 area samples plus vertices, edges and centroids). "
+                                     'Reconstruct still performs full validation and cleanup.')
+            else:
+                item = result['solid_screens'][0]
+                result['summary'] = item.get('summary') or 'No screened profile passed. Inspect trial errors; repair dependent boundaries or run a smaller operation set.'
+                result['blocked'] = bool(item.get('blocked'))
+            if not split:
+                for key in ('categories', 'holes', 'source_repair'):
+                    if key in result['solid_screens'][0]:result[key] = result['solid_screens'][0][key]
     result['seconds'] = time.perf_counter()-started
     return result
+
+
+def screen(source, profile, guarded):
+    """Checkpoint-screen up to four operation profiles on one intersection-free body.
+
+    Returns a dict with repair report, categories, holes, user-protection
+    counts, trials and the first passing profile (or an error summary).
+    """
+    from cad_mesh_tool.protected import face_cycles, locked_faces, mark_features
+    from cad_mesh_tool.source_repair import repair_collinear_faces
+    original_source = source
+    try:
+        source, source_repair = repair_collinear_faces(source)
+    except ValueError as error:
+        return dict(blocked=True, summary=str(error), trials=[], recommendation=None)
+    out = dict(source_repair=source_repair, trials=[], recommendation=None, blocked=False)
+    print('DISCOVER', flush=True)
+    plan = discover(source['vertices'], source['faces'], profile['epsilon_m'],
+                    profile.get('hole_detail_factor', 1.),
+                    (profile.get('hole_epsilon_mm', 0.)/1000) or None)
+    out['categories'] = dict(Counter(f['category'] for f in plan['features']))
+    out['holes'] = [{'id': f['id'], 'before': f['segments_before'], 'target': f['segments']}
+                    for f in plan['features'] if f['category'] == 'circular_hole']
+    locked = protection(source, plan['features']) if guarded else None
+    if locked:
+        for feature in plan['features']:
+            if feature['id'] in locked['features']:
+                feature['forced_skip_reason'] = 'Touches an unchanged source non-manifold junction'
+    user_faces = locked_faces(source)
+    user_cycles = face_cycles(source)
+    out['user_protected_faces'] = len(user_faces)
+    out['user_protected_features'] = mark_features(source, plan['features'])
+    current = dict(profile['operations'])
+    choices = [('Current options', current, profile.get('preserve_curve_segmentation', False))]
+    if out['holes'] and (current['arcs'] or current['outer_cylinders']):
+        holes = dict(current, circular_holes=True, arcs=False, outer_cylinders=False)
+        choices.extend([('Holes only; keep bends', holes, False),
+                        ('Holes without support loops', dict(holes, perimeter_loops=False), False)])
+    if out['holes']:
+        choices.append(('Keep curve segments', dict(current, perimeter_loops=True), True))
+    for label, options, preserve in choices[:4]:
+        screening = dict(profile, sample_count=750, preserve_curve_segmentation=preserve)
+        selected = decisions(plan['features'], options, preserve_curve_segmentation=preserve)
+        try:
+            print('SCREEN', label, flush=True)
+            candidate, mesh, origin, checked = validated_candidate(
+                source, selected, options, screening, locked, validation_source=original_source,
+                locked_faces=user_faces, locked_cycles=user_cycles)
+        except ValueError as error:
+            if not is_geometric_conflict(error):
+                raise
+            out['trials'].append({'label': label, 'error': str(error)})
+        else:
+            bpy.data.meshes.remove(mesh)
+            out['trials'].append({'label': label, 'checks': checked['checks'],
+                                  'triangles': checked['after']['t']})
+            out['recommendation'] = dict(options, preserve_curve_segmentation=preserve)
+            out['passed'] = label
+            break
+    return out
 
 
 if __name__ == '__main__':

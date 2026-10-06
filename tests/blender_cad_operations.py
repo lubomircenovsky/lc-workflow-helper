@@ -121,9 +121,10 @@ with tempfile.TemporaryDirectory() as directory:
     prepare_selected(run_dir, obj=rim_obj, operations=hole_only, perimeter_clearance_mm=1.0)
     run_worker(run_dir)
     manifest = json.loads((run_dir / 'manifest.json').read_text(encoding='utf-8'))
-    assert manifest['geometry_status'] == 'PASS' and manifest['partial']
+    # A changed authored sharp edge is informational, not a review finding.
+    assert manifest['geometry_status'] == 'PASS' and not manifest['partial']
     assert [4, 5] in manifest['lost_sharp_edges']
-    assert manifest['summary'].startswith('Validated output needs shading review.')
+    assert 'authored sharp edge(s) changed (informational)' in manifest['summary']
     assert manifest['perimeter_clearance_mm'] == 1.0
     names = apply_result(run_dir, include_checkpoint=False)
     reviewed = bpy.data.objects[names[0]]

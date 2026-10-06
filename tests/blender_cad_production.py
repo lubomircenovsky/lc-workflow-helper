@@ -15,7 +15,9 @@ from cad_mesh_tool.worker import main
 
 
 source = bpy.data.objects.get('T\u011bleso1.023')
-assert source is not None, 'Production source object is missing'
+if source is None:
+    print('SKIP blender_cad_production: open the production .blend with Těleso1.023')
+    sys.exit(0)
 original = fingerprint(source)
 operations = dict(DEFAULTS)
 if '--no-perimeters' in sys.argv:

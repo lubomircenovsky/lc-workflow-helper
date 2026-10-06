@@ -103,10 +103,29 @@ def planar_regions(v, faces, normals, adj, excluded=(), stable_seeds=False):
     return result
 
 
+try:
+    from numpy.linalg import _umath_linalg as _lapack
+except ImportError:  # pragma: no cover - other NumPy layouts
+    _lapack = None
+
+
+def _lstsq(matrix, rhs):
+    """np.linalg.lstsq(matrix, rhs, rcond=None) for real 2-D input via the same
+    LAPACK gufunc, without the generic wrapper overhead (detection calls it
+    ~10^5 times). Returns (solution, rank)."""
+    if _lapack is None:
+        fit, _, rank, _ = np.linalg.lstsq(matrix, rhs, rcond=None)
+        return fit, rank
+    rcond = np.finfo(np.float64).eps * max(matrix.shape)
+    with np.errstate(over='ignore', divide='ignore', under='ignore', invalid='ignore'):
+        fit, _, rank, _ = _lapack.lstsq(matrix, rhs[:, None], rcond, signature='ddd->ddid')
+    return fit[:, 0], int(rank)
+
+
 def circle_fit(points):
     p = np.asarray(points, dtype=float)
     origin = p.mean(0); q = p-origin
-    fit, _, rank, singular = np.linalg.lstsq(np.column_stack((2*q, np.ones(len(q)))), (q*q).sum(1), rcond=None)
+    fit, rank = _lstsq(np.column_stack((2*q, np.ones(len(q)))), (q*q).sum(1))
     if rank < 3:
         raise ValueError('Collinear circle fit')
     c = origin + fit[:2]

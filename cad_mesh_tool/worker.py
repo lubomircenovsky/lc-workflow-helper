@@ -134,6 +134,7 @@ def _validated_candidate_once(
         preserve_curve_segmentation=profile.get('preserve_curve_segmentation', False),
         preferred_clearance_m=profile.get('perimeter_clearance_mm', 0.0) / 1000,
         locked_faces=locked_faces,
+        clearance_policy=profile.get('perimeter_clearance_policy', 'fixed'),
     )
     timings['reconstruct_seconds'] = time.perf_counter() - phase
     phase = time.perf_counter()
@@ -278,6 +279,13 @@ def main(root, state=None, prepared=None):
     if (root / 'manifest.json').exists():
         raise FileExistsError('Completed run already exists')
     state['stage'] = 'discover'
+    if prepared is None and profile.get('prepared_path'):
+        # A parallel Auto variant receives its solid's detection pass as a
+        # pickle written by the parent Auto worker; it is verified below.
+        import pickle
+
+        with open(profile['prepared_path'], 'rb') as stream:
+            prepared = pickle.load(stream)
     if prepared is not None:
         detection_keys = ('epsilon_m', 'hole_detail_factor', 'hole_epsilon_mm')
         if prepared.get('source_sha256') != source_digest(source_text) or any(
@@ -486,7 +494,8 @@ def main(root, state=None, prepared=None):
         cleanup_started = time.perf_counter()
         try:
             proposed, _, report = cleanup(final)
-            checked, perimeters = validate_stage(proposed, remap, 'Background cleanup')
+            next_remap = [report['vertex_map'][i] if i >= 0 else -1 for i in remap]
+            checked, perimeters = validate_stage(proposed, next_remap, 'Background cleanup')
         except ValueError as error:
             if not (is_geometric_conflict(error) or isinstance(error, StageRejected)):
                 raise
@@ -498,9 +507,10 @@ def main(root, state=None, prepared=None):
         else:
             bpy.data.meshes.remove(final)
             final = proposed
+            remap = next_remap
             validation_final = checked
             final_perimeters = perimeters
-            cleanup_report = report
+            cleanup_report = {key: value for key, value in report.items() if key != 'vertex_map'}
             write(root, 'validation_background.json', checked)
         cleanup_report['elapsed_seconds'] = time.perf_counter() - cleanup_started
     if operations['straight_walls']:
@@ -555,7 +565,9 @@ def main(root, state=None, prepared=None):
     # Features left as authored inside a user-protected region are intended,
     # not a review finding; every other skip still makes the result partial.
     review_skips = [item for item in skipped if item['reason'] != SKIP_REASON]
-    partial = bool(protection or review_skips or stage_fallbacks or lost_sharp_edges)
+    # Authored sharp edges are informational: shading is usually re-authored
+    # (e.g. Set Sharp by Angle). A changed sharp edge alone is not REVIEW.
+    partial = bool(protection or review_skips or stage_fallbacks)
     skipped_ids = {item['feature'] for item in skipped}
     actual_segments = {item['id']: item['actual'] for item in candidate.get('actual_feature_segments', [])}
     rebuilt_count = sum(
@@ -692,18 +704,14 @@ def main(root, state=None, prepared=None):
             f"{len(stage_fallbacks)} step warning(s). "
             + ('Inspect CAD_Skipped and REPORT.md.' if skipped else 'Inspect REPORT.md.')
             if review_skips or stage_fallbacks
-            else (
-                'Validated output needs shading review.'
-                if lost_sharp_edges
-                else 'Selected CAD operations completed; inspect the output visually.'
-            )
+            else 'Selected CAD operations completed; inspect the output visually.'
         )
     )
     manifest['skip_summary'] = skipped_summary(skipped)
     if manifest['skip_summary']:
         manifest['summary'] += ' ' + manifest['skip_summary']
     if lost_sharp_edges:
-        manifest['summary'] += f' {len(lost_sharp_edges)} sharp edge(s) changed; review shading.'
+        manifest['summary'] += f' {len(lost_sharp_edges)} authored sharp edge(s) changed (informational).'
     if manifest['normal_limit_override_deg'] is not None:
         manifest['normal_limit_warning'] = (
             'Manual normal limit may accept visible shading changes'
@@ -732,13 +740,20 @@ def main(root, state=None, prepared=None):
         f"Validated reconstruction attempts: {recovery_attempts}.",
         '',
     ]
+    reduced = [p for p in final_perimeters if p.get('requested_clearance_m') is not None]
+    if reduced:
+        lines.append(
+            f"Auto reduced the support clearance for {len(reduced)} hole(s) where the requested "
+            f"{reduced[0]['requested_clearance_m']*1000:.2f} mm did not fit; all placement and quality checks applied."
+        )
     if manifest['circular_perimeter_clearances_mm']:
         used = manifest['circular_perimeter_clearances_mm']
         lines.append(f"Selected circular perimeter clearance (nominal): {min(used):.2f}-{max(used):.2f} mm.")
     if lost_sharp_edges:
         lines.append(
-            f"Shading review: {len(lost_sharp_edges)} source sharp edge(s) were removed; "
-            "geometry validation passed. Inspect CAD_Review_SharpEdges if present and adjust shading manually."
+            f"Shading note: {len(lost_sharp_edges)} authored sharp edge(s) were removed; "
+            "geometry validation passed. This does not require review; re-apply Set Sharp by Angle "
+            "if needed (CAD_Review_SharpEdges marks them)."
         )
         lines.append(f"Source vertex pairs (first 20): {lost_sharp_edges[:20]}.")
         if len(lost_sharp_edges) > 20:

@@ -342,10 +342,31 @@ def _cylinder_rim_data(cy, p):
     return result, skew_intervals
 
 
-def choose_perimeter(hole, outer, obstacles, radius=None, center=None, preferred_clearance_m=0.0):
+def automatic_support_sizes(radius):
+    """Candidate support half-sizes used when no fixed clearance is requested."""
+    return list(
+        dict.fromkeys(
+            [
+                max(radius + max(0.002, 0.25 * radius), 0.008),
+                radius + max(0.002, 0.25 * radius),
+                radius + max(0.002, 0.125 * radius),
+                radius + 0.002,
+                radius + 0.001,
+                radius + 0.0005,
+                radius + 0.00025,
+            ]
+        )
+    )
+
+
+def choose_perimeter(
+    hole, outer, obstacles, radius=None, center=None, preferred_clearance_m=0.0, sizes_override=None
+):
     attempts = []
     center = hole.mean(0) if center is None else center
-    if radius and preferred_clearance_m:
+    if sizes_override is not None:
+        sizes = list(sizes_override)
+    elif radius and preferred_clearance_m:
         # A nonzero user value is a constraint, not a hint to silently shrink.
         sizes = [radius + preferred_clearance_m]
     else:
@@ -567,6 +588,7 @@ def reconstruct(
     preserve_curve_segmentation=False,
     preferred_clearance_m=0.0,
     locked_faces=(),
+    clearance_policy='fixed',
 ):
     """Build one candidate mesh from the immutable snapshot and feature decisions.
 
@@ -591,6 +613,8 @@ def reconstruct(
     # --- Phase 1: setup and ownership
 
     operations = normalize(operations)
+    if clearance_policy not in ('fixed', 'shrink'):
+        raise ValueError('Clearance policy must be fixed or shrink')
     if not math.isfinite(preferred_clearance_m) or preferred_clearance_m < 0:
         raise ValueError('Preferred clearance must be a finite non-negative distance')
     V = np.array(snapshot['vertices'], dtype=float)
@@ -742,20 +766,16 @@ def reconstruct(
         if changed.intersection(locked_vertices) or claimed.intersection(locked_faces):
             raise GeometricConflict('Protected dependency conflicts with selected feature')
     if skipped:
-        vertex_faces = {vi: set() for vi in range(len(V))}
-        for fi, face in enumerate(F):
-            for vi in face:
-                vertex_faces[vi].add(fi)
+        # A preserved (skipped/disabled) feature keeps its own faces and every
+        # one of their vertices; surrounding flat areas may be re-tessellated
+        # around it. Moving or removing any of its vertices is a conflict. The
+        # final per-face check below and full validation still apply.
         for feature in skipped:
             region = set(feature['faces'])
-            frontier = set(feature['vertices'])
-            while True:
-                adjacent = {fi for vi in frontier for fi in vertex_faces[vi]}
-                added = {fi for fi in adjacent - region if changed.intersection(F[fi])}
-                if not added:
-                    break
-                region.update(added)
-                frontier.update(vi for fi in added for vi in F[fi])
+            if changed.intersection(feature['vertices']) or changed.intersection(
+                vi for fi in region for vi in F[fi]
+            ):
+                raise GeometricConflict('Protected dependency conflicts with selected feature')
             protected_faces.update(region)
             for item in review_features:
                 if item['id'] == feature['id'] and item['group'] == 'CAD_Skipped':
@@ -1027,6 +1047,26 @@ def reconstruct(
                     hole, outer, actual_obstacles, radius, center, preferred_clearance_m
                 )
                 attempts += actual_attempts
+            if (
+                sq is None
+                and radius is not None
+                and operations['perimeter_loops']
+                and preferred_clearance_m
+                and clearance_policy == 'shrink'
+            ):
+                # Auto only: a requested clearance that does not fit is
+                # reduced step by step (largest first) before falling back to
+                # a direct join. Every candidate keeps all placement and
+                # quality checks; the actual clearance is reported.
+                smaller = [s for s in automatic_support_sizes(radius) if s < radius + preferred_clearance_m]
+                smaller.sort(reverse=True)
+                for size in smaller:
+                    sq, shrink_attempts = choose_perimeter(
+                        hole, outer, actual_obstacles, radius, center, sizes_override=[size]
+                    )
+                    attempts += shrink_attempts
+                    if sq is not None:
+                        break
             if sq is None:
                 boundary_limited = radius is not None
                 outside_vertices = sum(not inside(x, outer) for x in hole)
@@ -1090,6 +1130,13 @@ def reconstruct(
                     kind='circular' if radius is not None else 'compound',
                     support_shape=attempts[-1].get('shape', 'square'),
                     clearance_m=attempts[-1]['size'] - radius if radius is not None else None,
+                    **(
+                        dict(requested_clearance_m=preferred_clearance_m)
+                        if radius is not None
+                        and preferred_clearance_m
+                        and attempts[-1]['size'] < radius + preferred_clearance_m - 1e-12
+                        else {}
+                    ),
                     layout='straight_strips' if layout else 'triangulated',
                     strips=[[ids_all[i] for i in f] for f in layout['strips']] if layout else [],
                 )

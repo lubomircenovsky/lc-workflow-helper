@@ -11,6 +11,9 @@ from cad_mesh_tool.rebuild import cylinder_rims, select_rim_samples
 from cad_mesh_tool.geometry import face_normals
 
 
+if '--' not in sys.argv:
+    print('SKIP blender_cad_rim_diagnostic: requires external production data after --')
+    sys.exit(0)
 root = Path(sys.argv[sys.argv.index('--') + 1])
 feature_id = int(sys.argv[sys.argv.index('--') + 2])
 source = json.loads((root / 'source.json').read_text(encoding='utf-8'))

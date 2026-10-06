@@ -67,6 +67,7 @@ class CADAnalysis:
             if repaired:
                 prefix+=f"{len(repaired)} collinear zero-area face(s) can be sewn without moving vertices. "
             if result['guarded']:prefix+='Automatic guarded strategy. '
+            if result.get('user_protected_faces'):prefix+=f"{result['user_protected_faces']} protected face(s) kept as authored. "
             if holes:prefix+=f"{len(holes)} holes; target segments {', '.join(map(str,targets))}. "
             categories=result.get('categories',{})
             if categories:

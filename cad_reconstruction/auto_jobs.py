@@ -85,6 +85,29 @@ class AutoBatch(jobs.CADBatch):
             self.items.append(dict(object=index, component=retry_component, row=self.row_offset+index,
                                    snapshot=None, imported=set()))
         self.queue = collections.deque(range(len(self.items)))
+        # Spare worker slots let a running solid evaluate its Auto variants in
+        # parallel processes once the queue no longer needs them.
+        self.slot_dir = self.root/f'_variant_slots_{uuid.uuid4().hex}'
+        self.slot_dir.mkdir(parents=True, exist_ok=True)
+        self._publish_capacity()
+
+    def _publish_capacity(self):
+        spare = max(0, self.max_workers - len(self.running) - len(self.queue))
+        try:
+            (self.slot_dir/'capacity.tmp').write_text(str(spare), encoding='utf8')
+            (self.slot_dir/'capacity.tmp').replace(self.slot_dir/'capacity.txt')
+        except OSError:
+            pass
+
+    def _release_slots_of(self, pid):
+        for slot in self.slot_dir.glob('slot_*'):
+            try:
+                if slot.read_text(encoding='utf8').strip() == str(pid):slot.unlink()
+            except OSError:
+                pass
+
+    def _stop_expired_workers(self):
+        jobs.stop_expired_workers(self.running, self.timeout_seconds, tree=True)
 
     @property
     def next_index(self):
@@ -154,6 +177,7 @@ class AutoBatch(jobs.CADBatch):
                            code_hash=code_hash(), tool_version=__version__, sample_count=20000,
                            unit_scale=bpy.context.scene.unit_settings.scale_length,
                            retry_component=item['component'],
+                           variant_slot_dir=str(self.slot_dir),
                            worker_timeout_minutes=self.timeout_seconds / 60)
             (directory/'profile.json').write_text(json.dumps(profile, indent=2), encoding='utf8')
             log = (directory/'worker.log').open('w', encoding='utf8')
@@ -262,15 +286,9 @@ class AutoBatch(jobs.CADBatch):
         self.completed += 1
 
     def cancel(self):
-        for job in self.running.values():
-            if job['process'].poll() is None:job['process'].terminate()
         for index in list(self.running):
             job = self.running[index]
-            process = job['process']
-            try:process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
+            jobs.kill_process_tree(job['process'])
             job['cancelled'] = True
             job['interrupted_reason'] = 'Cancelled by user'
             try:self._import_completed(index)
@@ -286,6 +304,7 @@ class AutoBatch(jobs.CADBatch):
             if row_index < len(rows) and rows[row_index].status in {'PENDING', 'RUNNING'}:
                 rows.remove(row_index)
         state.active_result = min(max(state.active_result, 0), max(len(rows) - 1, 0))
+        shutil.rmtree(self.slot_dir, ignore_errors=True)
         state.progress = 'Cancelled; completed results preserved'
 
     def _progress(self):
@@ -302,15 +321,23 @@ class AutoBatch(jobs.CADBatch):
         self._stop_expired_workers()
         for index, job in sorted(self.running.items()):
             if job['process'].poll() is not None:
+                # The worker has exited, so any variant slots it held are stale
+                # even if its report is still locked and finishing is retried.
+                pid = getattr(job['process'], 'pid', None)
                 self._finish_worker(index)
+                if pid is not None:
+                    self._release_slots_of(pid)
+                self._publish_capacity()
                 self._progress()
                 return True
             self._read_worker_progress(job)
         if self.queue and len(self.running) < self.max_workers:
             self._start_worker(self.queue.popleft())
+            self._publish_capacity()
             self._progress()
             return True
         if not self.running and not self.queue:
+            shutil.rmtree(self.slot_dir, ignore_errors=True)
             state.progress = f'Complete: {len(self.items)} CAD work item(s)'
             return False
         self._progress()

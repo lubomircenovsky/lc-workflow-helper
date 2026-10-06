@@ -35,6 +35,8 @@ try:
     before = fingerprint(cube)
     state = bpy.context.scene.lcw_cad_reconstruction
     assert state.perimeter_clearance_mm == 0.0
+    # This regression covers the Power user pipeline; Auto is the new default.
+    state.workflow_mode = "POWER_USER"
     state.mode = "SELECTED"
     space = next(
         area.spaces.active for screen in bpy.data.screens for area in screen.areas

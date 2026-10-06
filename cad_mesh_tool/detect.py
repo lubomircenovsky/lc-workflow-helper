@@ -245,18 +245,17 @@ def _discover(
                 ra[b].add(a)
     # Axes come from measured shared rails, not the world coordinate frame.
     votes = defaultdict(list)
-    for a, ns in enumerate(ra):
-        for b in sorted(ns):
-            if b <= a:
-                continue
-            cross = np.cross(rn[a], rn[b])
-            length = np.linalg.norm(cross)
-            if length < math.sin(math.radians(0.2)) or rn[a] @ rn[b] < math.cos(math.radians(45)):
-                continue
-            axis = cross / length
-            if axis[np.argmax(abs(axis))] < 0:
-                axis = -axis
-            votes[tuple(np.round(axis, 3))].append(axis)
+    pairs = [(a, b) for a, ns in enumerate(ra) for b in sorted(ns) if b > a]
+    # Same element-wise cross products, computed in one batch.
+    crosses = np.cross(rn[[a for a, _ in pairs]], rn[[b for _, b in pairs]]) if pairs else ()
+    for (a, b), cross in zip(pairs, crosses):
+        length = np.linalg.norm(cross)
+        if length < math.sin(math.radians(0.2)) or rn[a] @ rn[b] < math.cos(math.radians(45)):
+            continue
+        axis = cross / length
+        if axis[np.argmax(abs(axis))] < 0:
+            axis = -axis
+        votes[tuple(np.round(axis, 3))].append(axis)
     axes = []
     measured_seeds = []
     if measured:

@@ -11,6 +11,9 @@ from cad_mesh_tool.api import apply_result
 from cad_mesh_tool.mesh_io import fingerprint
 
 
+if '--' not in sys.argv:
+    print('SKIP blender_cad_import_groups: requires external production data after --')
+    sys.exit(0)
 run_dir = Path(sys.argv[sys.argv.index('--') + 1])
 source = bpy.data.objects['Těleso1.023']
 before = fingerprint(source)

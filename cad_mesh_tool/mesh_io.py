@@ -172,7 +172,14 @@ def make_mesh(candidate, name):
 
 
 def cleanup(mesh):
-    """Return a NEW mesh; retain validated checkpoint and its protected topology."""
+    """Return a NEW mesh; retain validated checkpoint and its protected topology.
+
+    Dissolving all edges around a vertex inside a flat background region leaves
+    that vertex unused, and Blender drops it. Such interior vertices may be
+    removed; every other vertex keeps its exact position. The report's
+    ``vertex_map`` maps each input vertex index to its output index (-1 when
+    removed), and all protected-face, sharp-edge and normal checks compare
+    through that map."""
     result = mesh.copy()
     result.name = mesh.name + '_Editable'
     before_edges = {tuple(sorted(edge.vertices)) for edge in mesh.edges}
@@ -181,6 +188,9 @@ def cleanup(mesh):
     bm.from_mesh(result)
     bm.faces.ensure_lookup_table()
     bm.verts.ensure_lookup_table()
+    source_layer = bm.verts.layers.int.new('cad_cleanup_source_vertex')
+    for vertex in bm.verts:
+        vertex[source_layer] = vertex.index
     role = bm.faces.layers.int.get('cad_role')
     if role is None:
         bm.free()
@@ -223,6 +233,17 @@ def cleanup(mesh):
     bm.to_mesh(result)
     bm.free()
     result.update()
+    attribute = result.attributes['cad_cleanup_source_vertex']
+    new_to_old = [0] * len(result.vertices)
+    attribute.data.foreach_get('value', new_to_old)
+    result.attributes.remove(attribute)
+    old_to_new = [-1] * len(mesh.vertices)
+    for new_index, old_index in enumerate(new_to_old):
+        old_to_new[old_index] = new_index
+
+    def old_key(ids):
+        return key(new_to_old[i] for i in ids)
+
     # Blender ear-clipping of a concave n-gon with collinear boundary vertices
     # can create a zero-area or reversed loop triangle. Keep other large n-gons;
     # retriangulate only the offending background polygons with constrained CDT.
@@ -276,12 +297,12 @@ def cleanup(mesh):
             p.material_index = mat
         bpy.data.meshes.remove(result)
         result = replacement
-    new = {key(p.vertices): tuple(p.vertices) for p in result.polygons}
+    new = {old_key(p.vertices): tuple(p.vertices) for p in result.polygons}
     missing = [k for k in protected if k not in new]
     if missing:
         bpy.data.meshes.remove(result)
         raise StageRejected('Protected faces lost during cleanup: ' + str(len(missing)))
-    result_edges = {tuple(sorted(edge.vertices)): edge for edge in result.edges}
+    result_edges = {old_key(edge.vertices): edge for edge in result.edges}
     if not sharp_edges <= result_edges.keys():
         bpy.data.meshes.remove(result)
         raise ValueError('Cleanup removed a protected sharp edge')
@@ -289,17 +310,17 @@ def cleanup(mesh):
         result_edges[edge_key].use_edge_sharp = True
     normals = []
     for p in result.polygons:
-        ns = old.get(key(p.vertices))
-        normals.extend([ns[v] if ns else list(p.normal) for v in p.vertices])
+        ns = old.get(old_key(p.vertices))
+        normals.extend([ns[new_to_old[v]] if ns else list(p.normal) for v in p.vertices])
         p.use_smooth = True
     result.normals_split_custom_set(normals)
-    if len(mesh.vertices) != len(result.vertices) or any(
-        (a.co - b.co).length > 0 for a, b in zip(mesh.vertices, result.vertices)
-    ):
+    removed = [vi for vi, target in enumerate(old_to_new) if target < 0]
+    if any(target >= 0 and (mesh.vertices[vi].co - result.vertices[target].co).length > 0
+           for vi, target in enumerate(old_to_new)):
         bpy.data.meshes.remove(result)
         raise StageRejected('Cleanup changed vertices')
     roles = [ROLES[x.value] for x in result.attributes['cad_role'].data]
-    after_edges = {tuple(sorted(edge.vertices)) for edge in result.edges}
+    after_edges = {old_key(edge.vertices) for edge in result.edges}
     return (
         result,
         roles,
@@ -308,5 +329,7 @@ def cleanup(mesh):
             protected_faces=len(protected),
             protected_faces_lost=len(missing),
             locally_triangulated_ngons=len(bad_polys),
+            removed_interior_vertices=len(removed),
+            vertex_map=old_to_new,
         ),
     )

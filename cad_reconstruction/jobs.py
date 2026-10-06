@@ -506,17 +506,34 @@ class CADBatch:
         stop_expired_workers(self.running, self.timeout_seconds)
 
 
-def stop_expired_workers(running, timeout_seconds):
+def kill_process_tree(process):
+    """Stop a worker and any variant processes it started."""
+    if process.poll() is not None:return
+    if os.name == 'nt':
+        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        process.kill()
+    try:process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def stop_expired_workers(running, timeout_seconds, tree=False):
     if not timeout_seconds:return
     for job in running.values():
         process = job['process']
         elapsed = time.perf_counter()-job['started']
         if process.poll() is not None or elapsed < timeout_seconds:continue
-        process.terminate()
-        try:process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+        if tree:
+            kill_process_tree(process)
+        else:
+            process.terminate()
+            try:process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
         job['timed_out'] = True
         (job['run_dir']/'timeout.json').write_text(json.dumps(dict(
             status='TIMED_OUT', limit_minutes=timeout_seconds/60, elapsed_seconds=elapsed)), encoding='utf8')

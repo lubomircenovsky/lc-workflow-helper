@@ -52,13 +52,17 @@ plan = discover(source["vertices"], source["faces"])
 assert any(item["category"] == "circular_hole" for item in plan["features"])
 candidate = reconstruct(source, plan["features"])
 direct = [item for item in candidate["perimeters"] if item["layout"] == "direct_join"]
-assert direct, "Near-edge circular hole did not use direct triangulation"
+circular = [item for item in candidate["perimeters"] if item.get("kind") == "circular"]
+# Contour-following rings and compact supports can now fit this hole; a
+# direct join remains the validated fallback when nothing fits.
+assert direct or any(item["ids"] for item in circular), candidate["perimeters"]
 result_mesh, origin = make_mesh(candidate, "CAD Near Edge Result")
 assert any(edge.use_edge_sharp for edge in result_mesh.edges)
 review_object = bpy.data.objects.new('CAD Near Edge Review', result_mesh)
-assert any(item['group'] == 'CAD_Skipped' for item in candidate['review_features'])
-assert any(item['group'] == 'CAD_Skipped' for item in add_review_groups(review_object, candidate))
-assert review_object.vertex_groups.get('CAD_Skipped') is not None
+if direct:
+    assert any(item['group'] == 'CAD_Skipped' for item in candidate['review_features'])
+    assert any(item['group'] == 'CAD_Skipped' for item in add_review_groups(review_object, candidate))
+    assert review_object.vertex_groups.get('CAD_Skipped') is not None
 validation = validate(
     source, result_mesh, origin, candidate["roles"], candidate["perimeters"],
     epsilon=0.0004, sample_count=500,
@@ -73,13 +77,13 @@ rejected = validate(source, result_mesh, origin, candidate['roles'], candidate['
 assert not rejected['sharp_edges_preserved']
 assert all(rejected['checks'].values())
 checkpoint_sharp.use_edge_sharp = True
-clean_mesh, _, _ = cleanup(result_mesh)
+clean_mesh, _, clean_report = cleanup(result_mesh)
+background_map = clean_report["vertex_map"]
 assert any(edge.use_edge_sharp for edge in clean_mesh.edges)
 final_mesh, wall_report = cleanup_straight_walls(clean_mesh, {"enabled": True})
 sharp = {tuple(sorted(edge.vertices)) for edge in final_mesh.edges if edge.use_edge_sharp}
-assert tuple(sorted(wall_report['vertex_map'][candidate['source_to_candidate'][i]]
-                    for i in (0, 1))) in sharp
-remap = wall_report["vertex_map"]
+remap = [wall_report["vertex_map"][i] if i >= 0 else -1 for i in background_map]
+assert tuple(sorted(remap[candidate['source_to_candidate'][i]] for i in (0, 1))) in sharp
 final_perimeters = [
     dict(item, ids=[remap[i] for i in item["ids"]],
          hole=[remap[i] for i in item["hole"]],

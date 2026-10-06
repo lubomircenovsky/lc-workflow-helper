@@ -14,6 +14,9 @@ from cad_mesh_tool.detect import discover, _discover
 from cad_mesh_tool.recovery import decisions
 from cad_mesh_tool.worker import validated_candidate
 
+if '--' not in sys.argv:
+    print('SKIP blender_cad_measured_bends: requires external production data after --')
+    sys.exit(0)
 fixture=Path(sys.argv[sys.argv.index('--')+1])
 for row in json.loads(fixture.read_text()):
     root=Path(row['baseline'])

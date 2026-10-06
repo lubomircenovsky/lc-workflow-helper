@@ -1,6 +1,10 @@
 """One external process per object; solids and immutable variants run sequentially."""
 import hashlib
 import json
+import os
+import pickle
+import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -16,6 +20,32 @@ from cad_mesh_tool.geometry import topology
 from cad_mesh_tool.operations import decision
 from cad_mesh_tool.solids import solid_partitions, extract_component
 from cad_mesh_tool.worker import main as run_variant, prepare_source, source_digest
+
+
+PARALLEL_VARIANT_TRIANGLES = 4000
+
+
+def acquire_slot(profile):
+    """Claim one spare CPU slot published by the batch (atomic slot files)."""
+    directory = profile.get('variant_slot_dir')
+    if not directory:return None
+    directory = Path(directory)
+    try:capacity = int((directory/'capacity.txt').read_text(encoding='utf8').strip() or 0)
+    except (OSError, ValueError):return None
+    for number in range(max(0, capacity)):
+        slot = directory/f'slot_{number}'
+        try:descriptor = os.open(slot, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except OSError:continue
+        os.write(descriptor, str(os.getpid()).encode())
+        os.close(descriptor)
+        return slot
+    return None
+
+
+def release_slot(slot):
+    if slot is None:return
+    try:slot.unlink()
+    except OSError:pass
 
 
 def read(path):
@@ -68,28 +98,31 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
                     profile={k: profile.get(k) for k in ('epsilon_m', 'hole_detail_factor', 'hole_epsilon_mm')})
     features = prepared['discovery']['features']
     item['detected'] = len(features)
-    choices = variants(features)
-    for order in range(4):
-        if order >= len(choices):
-            fallback = fallback_variant(features, item['trials'])
-            if fallback is None or any(c[0] == fallback[0] for c in choices):break
-            choices.append(fallback)
-        label, operations, preserve = choices[order]
-        directory = root/f'solid_{index:04d}'/label
+    choices = [(order,)+choice for order, choice in enumerate(variants(features))]
+    pending = list(choices)
+    children = {}
+    fallback_checked = False
+    prepared_path = None
+    body_root = root/f'solid_{index:04d}'
+
+    def prepare_directory(order, label, operations, preserve, extra=None):
+        directory = body_root/label
         directory.mkdir(parents=True, exist_ok=False)
         options = dict(profile, method='A', delivery='EDITABLE_NGONS', operations=operations,
                        preserve_curve_segmentation=preserve, preserve_nonmanifold=item['guarded'],
                        component_index=index, shared_interface_reversed_faces=partition['reversed_faces'],
-                       straight_walls=dict(enabled=True, normal_limit_deg=None))
+                       straight_walls=dict(enabled=True, normal_limit_deg=None),
+                       # Auto may reduce a requested support clearance that does not fit.
+                       perimeter_clearance_policy='shrink', **(extra or {}))
         (directory/'source.json').write_text(body_text, encoding='utf8')
         (directory/'profile.json').write_text(json.dumps(options, indent=2), encoding='utf8')
-        trial = dict(variant=label, order=order, path=str(directory.relative_to(root)), status='FAIL')
         print('AUTO_VARIANT', index, label, flush=True)
-        objects_before = set(bpy.data.objects)
-        meshes_before = set(bpy.data.meshes)
-        state = {}
+        return directory
+
+    def finish(order, label, operations, preserve, directory, error=None, stage=None, trace=None):
+        trial = dict(variant=label, order=order, path=str(directory.relative_to(root)), status='FAIL')
         try:
-            run_variant(directory, state, prepared)
+            if error is not None:raise ValueError(error)
             manifest = read(directory/'manifest.json')
             validation = read(directory/'validation_final.json')
             if manifest['geometry_status'] != 'PASS' or not all(validation['checks'].values()):
@@ -108,19 +141,118 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
                          untreated=untreated, loops=manifest['operation_results']['perimeter_loops_created'],
                          preserve_segments=preserve, partial=partial,
                          result_sha256=manifest['result_sha256'])
-        except Exception as error:
-            trial['error'] = str(error)
-            (directory/'auto_failure.json').write_text(json.dumps(dict(error=str(error),
-                stage=state.get('stage', 'startup'), traceback=traceback.format_exc()), indent=2), encoding='utf8')
-        finally:
-            for obj in set(bpy.data.objects)-objects_before:bpy.data.objects.remove(obj, do_unlink=True)
-            for mesh in set(bpy.data.meshes)-meshes_before:
-                if mesh.users == 0:bpy.data.meshes.remove(mesh)
+        except Exception as failure:
+            trial['error'] = str(failure)
+            if not (directory/'auto_failure.json').exists():
+                (directory/'auto_failure.json').write_text(json.dumps(dict(error=str(failure),
+                    stage=stage or 'startup', traceback=trace or traceback.format_exc()), indent=2), encoding='utf8')
         item['trials'].append(trial)
+        # Completion order varies with parallel variants; ranking and reports
+        # use the deterministic variant order.
+        item['trials'].sort(key=lambda value: value['order'])
         select_winner(item, objective)
         item['seconds'] = time.perf_counter()-started
         if checkpoint is not None:
             checkpoint(item)
+
+    def collect(block=False):
+        while children:
+            for order in sorted(children):
+                process, slot, args, directory = children[order]
+                if process.poll() is None:continue
+                release_slot(slot)
+                del children[order]
+                error = stage = trace = None
+                if not (directory/'manifest.json').exists():
+                    failure = directory/'failure.json'
+                    detail = read(failure) if failure.exists() else {}
+                    error = detail.get('error') or f'Variant worker exited with code {process.returncode}'
+                    stage, trace = detail.get('stage'), detail.get('traceback')
+                finish(*args, directory, error, stage, trace)
+            if not block or not children:return
+            time.sleep(.2)
+
+    def launch(order, label, operations, preserve, slot):
+        nonlocal prepared_path
+        if prepared_path is None:
+            prepared_path = body_root/'prepared.pkl'
+            body_root.mkdir(parents=True, exist_ok=True)
+            with prepared_path.open('wb') as stream:pickle.dump(prepared, stream)
+        directory = prepare_directory(order, label, operations, preserve,
+                                      dict(prepared_path=str(prepared_path)))
+        log = (directory/'worker.log').open('w', encoding='utf8')
+        process = subprocess.Popen([bpy.app.binary_path, '--background', '--factory-startup',
+            '--python-exit-code', '1', '--python', str(Path(__file__).with_name('worker.py')), '--', str(directory)],
+            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        log.close()
+        children[order] = (process, slot, (order, label, operations, preserve), directory)
+
+    # Large solids run every variant in a child process: this process keeps
+    # one of them on its own slot and starts the others whenever the batch
+    # publishes a spare slot, also while earlier variants are still running.
+    # Small solids stay in-process; a child's start-up would cost more.
+    use_children = bool(profile.get('variant_slot_dir')) and len(body['triangles']) >= profile.get(
+        'parallel_variant_triangles', PARALLEL_VARIANT_TRIANGLES)
+    # The holes-only fallback depends on the other variants' outcome. With a
+    # spare slot it is computed speculatively and only used if the ordinary
+    # rule (auto_policy.fallback_variant) asks for it; otherwise discarded.
+    possible = fallback_variant(features, [dict(variant='full', status='FAIL')]) if use_children else None
+    speculative = None
+    while True:
+        if use_children:
+            while pending:
+                own = not any(slot is None for _, slot, _, _ in children.values())
+                slot = None if own else acquire_slot(profile)
+                if not own and slot is None:break
+                launch(*pending.pop(0), slot)
+            if (not pending and possible is not None and speculative is None and not fallback_checked
+                    and len(choices) < 4 and not any(c[1] == possible[0] for c in choices)):
+                slot = acquire_slot(profile)
+                if slot is not None:
+                    launch(len(choices), *possible, slot)
+                    speculative = children.pop(len(choices))
+            if pending or children:
+                collect()
+                time.sleep(.2)
+                continue
+        elif pending:
+            order, label, operations, preserve = pending.pop(0)
+            directory = prepare_directory(order, label, operations, preserve)
+            objects_before = set(bpy.data.objects)
+            meshes_before = set(bpy.data.meshes)
+            state = {}
+            error = trace = None
+            try:
+                run_variant(directory, state, prepared)
+            except Exception as failure:
+                error, trace = str(failure), traceback.format_exc()
+            finally:
+                for obj in set(bpy.data.objects)-objects_before:bpy.data.objects.remove(obj, do_unlink=True)
+                for mesh in set(bpy.data.meshes)-meshes_before:
+                    if mesh.users == 0:bpy.data.meshes.remove(mesh)
+            finish(order, label, operations, preserve, directory, error, state.get('stage', 'startup'), trace)
+            continue
+        if fallback_checked or len(choices) >= 4:break
+        fallback_checked = True
+        fallback = fallback_variant(features, item['trials'])
+        if fallback is None or any(c[1] == fallback[0] for c in choices):
+            if speculative is not None:
+                process, slot, _, directory = speculative
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+                release_slot(slot)
+                shutil.rmtree(directory, ignore_errors=True)
+            break
+        choice = (len(choices),)+fallback
+        choices.append(choice)
+        if speculative is not None:
+            # Same order, label and options as the speculative run.
+            children[choice[0]] = speculative
+            speculative = None
+            continue
+        pending.append(choice)
     select_winner(item, objective)
     item['seconds'] = time.perf_counter()-started
     return item

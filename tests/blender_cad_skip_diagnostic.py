@@ -10,6 +10,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import cad_mesh_tool.rebuild as rebuild
 
 
+if '--' not in sys.argv:
+    print('SKIP blender_cad_skip_diagnostic: requires external production data after --')
+    sys.exit(0)
 root = Path(sys.argv[sys.argv.index('--') + 1])
 feature_id = int(sys.argv[sys.argv.index('--') + 2])
 source = json.loads((root / 'source.json').read_text(encoding='utf-8'))

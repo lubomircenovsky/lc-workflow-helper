@@ -15,6 +15,9 @@ from cad_mesh_tool.detect import discover
 from cad_mesh_tool.recovery import decisions
 from cad_mesh_tool.worker import validated_candidate
 
+if '--' not in sys.argv:
+    print('SKIP blender_cad_production_backoff: requires external production data after --')
+    sys.exit(0)
 root = Path(sys.argv[sys.argv.index('--')+1])
 source = json.loads((root/'source.json').read_text())
 profile = json.loads((root/'profile.json').read_text())
