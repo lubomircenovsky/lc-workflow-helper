@@ -538,6 +538,47 @@ def main(root, state=None, prepared=None):
             wall_report = report
             write(root, 'validation_straight_walls.json', checked)
         wall_report['elapsed_seconds'] = time.perf_counter() - walls_started
+    collinear_report = dict(removed_vertices=0)
+    if operations['background_cleanup']:
+        # Collinear vertices on straight creases (typically plane vertices
+        # pinned onto a bend rim) are removed where nothing depends on them.
+        # Optional refinement: a rejection keeps the previous validated
+        # result and is reported, but does not make the result REVIEW.
+        from cad_mesh_tool.collinear import remove_collinear_vertices
+
+        state['stage'] = 'collinear_cleanup_unvalidated'
+        proposed = None
+        collinear_started = time.perf_counter()
+        to_final = [remap[i] if i >= 0 else -1 for i in candidate['source_to_candidate']]
+        blocked = {i for p in final_perimeters for name in ('ids', 'hole') for i in p[name]}
+        blocked |= {i for p in final_perimeters for face in p.get('strips', []) for i in face}
+        frozen = {to_final[v] for cycle in locked_cycles for v in cycle if 0 <= v < len(to_final)}
+        if protection is not None:
+            frozen |= {to_final[v] for v in protection['vertices'] if 0 <= v < len(to_final)}
+        frozen.discard(-1)
+        try:
+            proposed, report = remove_collinear_vertices(final, blocked, frozen)
+            if report['removed_vertices']:
+                next_remap = [report['vertex_map'][i] if i >= 0 else -1 for i in remap]
+                checked, perimeters = validate_stage(proposed, next_remap, 'Collinear cleanup')
+        except ValueError as error:
+            if not (is_geometric_conflict(error) or isinstance(error, StageRejected)):
+                raise
+            if proposed is not None:
+                bpy.data.meshes.remove(proposed)
+            collinear_report = dict(removed_vertices=0, rejected_stage=str(error))
+        else:
+            if report['removed_vertices']:
+                bpy.data.meshes.remove(final)
+                final = proposed
+                remap = next_remap
+                validation_final = checked
+                final_perimeters = perimeters
+                write(root, 'validation_collinear.json', checked)
+            else:
+                bpy.data.meshes.remove(proposed)
+            collinear_report = {key: value for key, value in report.items() if key != 'vertex_map'}
+        collinear_report['elapsed_seconds'] = time.perf_counter() - collinear_started
     # An independent subset is already a new result relative to its parent.
     # Keep clean partitioned solids even when no contour needed reconstruction.
     separated_solid = profile.get('component_index') is not None and bool(source.get('source_face_ids'))
@@ -561,6 +602,7 @@ def main(root, state=None, prepared=None):
     write(root, 'perimeters_final.json', final_perimeters)
     write(root, 'validation_final.json', validation_final)
     write(root, 'cleanup.json', cleanup_report)
+    write(root, 'collinear.json', collinear_report)
     write(root, 'vertex_map.json', vertex_maps(candidate, remap))
     scale = profile['unit_scale']
     objects = []
@@ -637,6 +679,7 @@ def main(root, state=None, prepared=None):
         ngons_before=sum(len(face) > 4 for face in source['faces']),
         ngons_after=sum(len(face.vertices) > 4 for face in final.polygons),
         locally_triangulated_ngons=cleanup_report.get('locally_triangulated_ngons', 0),
+        collinear_vertices_removed=collinear_report.get('removed_vertices', 0),
     )
     manifest = dict(
         geometry_status='PASS',
@@ -752,7 +795,8 @@ def main(root, state=None, prepared=None):
         f"Curve reduction: {operation_results['curves_reduced']} features, "
         f"{operation_results['segments_reduced']} segments removed.",
         f"Planar cleanup: {operation_results['planar_edges_removed']} internal edges removed; "
-        f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}.",
+        f"ngons {operation_results['ngons_before']} -> {operation_results['ngons_after']}; "
+        f"{operation_results['collinear_vertices_removed']} collinear crease vertices removed.",
         f"Triangles: {manifest['before']['t']} -> {manifest['final']['t']}.",
         f"Validated reconstruction attempts: {recovery_attempts}.",
         '',
