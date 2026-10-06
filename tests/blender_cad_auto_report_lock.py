@@ -95,3 +95,4 @@ try:
     print('CAD_AUTO_REPORT_LOCK_OK', bpy.app.version_string)
 finally:
     addon.unregister()
+print('PASS blender_cad_auto_report_lock')

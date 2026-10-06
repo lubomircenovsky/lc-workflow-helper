@@ -111,3 +111,4 @@ except ValueError as exc:
 else:
     raise AssertionError("Non-manifold source was accepted")
 print("CAD_EDGE_HOLE_OK", len(plan["features"]), len(direct), final_validation["checks"])
+print('PASS blender_cad_edge_hole')

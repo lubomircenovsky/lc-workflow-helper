@@ -4,7 +4,8 @@ The source carries a BOOLEAN face attribute ``cad_protected``. Capture stores
 its face indices as ``user_protected_faces``. Every feature sharing a vertex
 with those faces is forced to SKIP, the faces themselves are locked during
 reconstruction, and final validation compares them by explicit source vertex
-IDs. The attribute is ordinary mesh data; reconstruction never writes it.
+IDs. After validation the result meshes carry the same attribute on exactly
+those faces, so a result used as the next input keeps its protection.
 """
 import struct
 from collections import Counter
@@ -78,3 +79,29 @@ def preservation_errors(cycles, source_vertices, output_faces, output_vertices, 
         else:
             counts[key] -= 1
     return errors
+
+
+def mark_output(mesh, cycles, source_to_output):
+    """Flag the output faces of validated protected cycles; return how many.
+
+    Called only after ``preservation_errors`` passed, so every cycle maps to
+    exactly one output face. Unmapped cycles are ignored rather than guessed."""
+    wanted = Counter()
+    for cycle in cycles:
+        mapped = [source_to_output[vi] if 0 <= vi < len(source_to_output) else -1 for vi in cycle]
+        if min(mapped) >= 0:
+            wanted[_cyclic(mapped)] += 1
+    values = [False] * len(mesh.polygons)
+    for polygon in mesh.polygons:
+        key = _cyclic(polygon.vertices)
+        if wanted[key] > 0:
+            values[polygon.index] = True
+            wanted[key] -= 1
+    attr = mesh.attributes.get(ATTRIBUTE)
+    if attr is not None and (attr.domain != 'FACE' or attr.data_type != 'BOOLEAN'):
+        mesh.attributes.remove(attr)
+        attr = None
+    if attr is None:
+        attr = mesh.attributes.new(ATTRIBUTE, 'BOOLEAN', 'FACE')
+    attr.data.foreach_set('value', values)
+    return sum(values)

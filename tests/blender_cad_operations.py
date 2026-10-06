@@ -143,3 +143,4 @@ with tempfile.TemporaryDirectory() as directory:
     assert clearances and all(0 < value <= 1.000001 for value in clearances), clearances
     assert 'Selected circular perimeter clearance (nominal):' in (run_dir / 'REPORT.md').read_text(encoding='utf-8')
     print('CAD_CLEARANCE_OK', clearances)
+print('PASS blender_cad_operations')

@@ -43,3 +43,4 @@ support, attempts = choose_perimeter(compound, domain, [], None, np.zeros(2), .0
 assert support is not None and attempts[-1]['shape']=='contour', attempts
 assert annulus_quality(support,compound)<=20 and not contacts(support,domain)
 print('CAD_REGION_BOUNDARIES_OK')
+print('PASS blender_cad_region_boundaries')

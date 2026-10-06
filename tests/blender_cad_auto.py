@@ -171,3 +171,4 @@ auto_worker.main(Path(sys.argv[sys.argv.index('--')+1]))
         assert started and all(r.status=='FAIL' for r in started),[(r.status,r.reason) for r in new_rows]
     print('CAD_AUTO_INTEGRATION_OK')
 finally:addon.unregister()
+print('PASS blender_cad_auto')

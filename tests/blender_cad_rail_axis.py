@@ -62,3 +62,4 @@ before = dict(feature)
 refine_rail_axis(altered, feature, .0015)
 assert feature == before
 print('CAD_RAIL_AXIS_OK')
+print('PASS blender_cad_rail_axis')

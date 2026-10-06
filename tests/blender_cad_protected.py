@@ -76,9 +76,9 @@ def legacy_fingerprint(obj):
     return hashlib.sha256(json.dumps(data, separators=(',', ':')).encode()).hexdigest()
 
 
-def run(obj):
+def run(obj, operations=None):
     root = Path(tempfile.mkdtemp(prefix='cad_protected_')) / 'run'
-    prepare_selected(root, epsilon_mm=.4, obj=obj)
+    prepare_selected(root, epsilon_mm=.4, obj=obj, operations=operations)
     run_worker(root, {})
     manifest = json.loads((root / 'manifest.json').read_text())
     candidate = json.loads((root / 'candidate.json').read_text())
@@ -138,4 +138,29 @@ assert manifest['user_protected_features'] == [], manifest['user_protected_featu
 assert manifest['operation_results']['curves_reduced'] >= 2, manifest['skipped_features']
 assert all(item['target'] < 32 for item in manifest['hole_segment_targets'])
 assert not output_face_set(result, world, [faces[corner]]), 'protected cap face must remain as authored'
+
+# 3) The protection travels with the result: a second reconstruction of the
+#    first result keeps the same faces protected without re-marking them.
+first_ops = dict(perimeter_loops=False, background_cleanup=False, straight_walls=False)
+obj = build('Protected Chain', walls[1])
+manifest, candidate, validation, result, world = run(obj, first_ops)
+assert manifest['geometry_status'] == 'PASS', manifest
+assert manifest['user_protected_faces_marked']['final'] == 32, manifest['user_protected_faces_marked']
+flagged = faces_from_mesh(result.data)
+assert len(flagged) == 32, len(flagged)
+wall_points = np.array([vertices[vi] for fi in walls[1] for vi in faces[fi]])
+flagged_points = np.array([world[vi] for fi in flagged for vi in result.data.polygons[fi].vertices])
+gaps = np.min(np.linalg.norm(flagged_points[:, None] - wall_points[None], axis=2), axis=1)
+assert gaps.max() < 1e-6, f'marked faces are the protected walls (max gap {gaps.max()})'
+from mathutils import Matrix
+result.matrix_world = Matrix(manifest['result_matrix_world'])
+bpy.context.scene.collection.objects.link(result)
+assert len(capture(result)['user_protected_faces']) == 32
+second, _, second_validation, second_result, second_world = run(result)
+assert second['geometry_status'] == 'PASS', second
+assert second_validation['checks']['user_protected_preserved'] is True
+assert second['user_protected_faces'] == 32 and len(second['user_protected_features']) == 1
+assert second['user_protected_faces_marked']['final'] == 32
+assert not output_face_set(second_result, second_world, [faces[fi] for fi in walls[1]]), 'protected walls survive two runs'
+assert len(faces_from_mesh(second_result.data)) == 32
 print('PASS blender_cad_protected')

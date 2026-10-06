@@ -151,3 +151,4 @@ finally:
     assert (space.shading.type, space.shading.color_type,
             space.shading.wireframe_color_type) == original_shading
     print("CAD_UI_UNREGISTER_OK")
+print('PASS blender_cad_ui')

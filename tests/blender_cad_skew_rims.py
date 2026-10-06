@@ -75,3 +75,4 @@ cy['span'] = 2.394
 assert [r[0] for r in cylinder_rims(cy, points)] == expected
 assert not _cylinder_rim_data(cy, points)[1]
 print('CAD_SKEW_RIMS_OK')
+print('PASS blender_cad_skew_rims')

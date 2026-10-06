@@ -126,3 +126,4 @@ try:
     print('CAD_PANEL_DRAW_RNA_BRANCHES_OK')
 finally:
     addon.unregister()
+print('PASS blender_cad_panel_draw')

@@ -218,3 +218,4 @@ try:
         print("CAD_UV_ROLLBACK_OK")
 finally:
     addon.unregister()
+print('PASS blender_cad_uv_prep')

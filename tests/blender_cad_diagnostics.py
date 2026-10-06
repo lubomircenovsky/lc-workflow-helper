@@ -32,3 +32,4 @@ assert {group.name for group in obj.vertex_groups} == {
 assert next(item for item in report if item['feature'] == 2)['unmapped_source_vertices'] == 1
 assert next(item for item in report if item['feature'] is None)['vertices'] == 3
 print('CAD_DIAGNOSTICS_OK', mapping['source_to_final'], [item['group'] for item in report])
+print('PASS blender_cad_diagnostics')

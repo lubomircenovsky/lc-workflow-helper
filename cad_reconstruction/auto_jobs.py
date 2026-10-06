@@ -20,6 +20,7 @@ from ..cad_mesh_tool import __version__
 from ..cad_mesh_tool.api import code_hash
 from ..cad_mesh_tool.auto_policy import completed_bodies, objective_name
 from ..cad_mesh_tool.mesh_io import capture, fingerprint
+from ..cad_mesh_tool.processes import spawn_options
 from ..cad_mesh_tool.solids import solid_partitions
 from . import jobs
 
@@ -185,7 +186,7 @@ class AutoBatch(jobs.CADBatch):
             process = subprocess.Popen([bpy.app.binary_path, '--background', '--factory-startup',
                 '--python-exit-code', '1', '--python', str(worker), '--', str(directory)],
                 stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+                **spawn_options(group=True))
             self.running[item_id] = dict(index=item_id, process=process, log=log, run_dir=directory,
                 log_position=0, phase='Analyzing solids', source_hash=source_hash,
                 started=time.perf_counter(), imported=item['imported'])

@@ -109,6 +109,34 @@ except ImportError:  # pragma: no cover - other NumPy layouts
     _lapack = None
 
 
+def _private_lstsq_matches():
+    """The gufunc is private NumPy API. Use it only if it exists with the
+    expected signature and reproduces np.linalg.lstsq bit for bit on probes
+    (full rank, rank deficient, overdetermined); otherwise use the public call."""
+    if _lapack is None:
+        return False
+    probes = [
+        (np.array([[1., 2., 1.], [3., -1., 1.], [0.5, 4., 1.], [2., 2., 1.]]), np.array([1., -2., 3., .25])),
+        (np.array([[1., 2., 3.], [2., 4., 6.], [1., 0., 1.]]), np.array([1., 2., .5])),
+        (np.array([[1e-3, 1.], [2e-3, 1.], [3.5e-3, 1.]]), np.array([-0.0, 1e-9, 2.])),
+    ]
+    try:
+        for matrix, rhs in probes:
+            rcond = np.finfo(np.float64).eps * max(matrix.shape)
+            with np.errstate(all='ignore'):
+                fit, _, rank, _ = _lapack.lstsq(matrix, rhs[:, None], rcond, signature='ddd->ddid')
+            ref, _, ref_rank, _ = np.linalg.lstsq(matrix, rhs, rcond=None)
+            if int(rank) != int(ref_rank) or fit[:, 0].tobytes() != ref.tobytes():
+                return False
+    except Exception:
+        return False
+    return True
+
+
+if not _private_lstsq_matches():
+    _lapack = None
+
+
 def _lstsq(matrix, rhs):
     """np.linalg.lstsq(matrix, rhs, rcond=None) for real 2-D input via the same
     LAPACK gufunc, without the generic wrapper overhead (detection calls it

@@ -15,6 +15,7 @@ from ..cad_mesh_tool.api import apply_result, prepare_selected
 from ..cad_mesh_tool.mesh_io import fingerprint, topology_problem, source_topology
 from ..cad_mesh_tool.solids import solid_partitions
 from ..cad_mesh_tool.operations import DEFAULTS, normalize
+from ..cad_mesh_tool.processes import kill_tree
 
 
 ACTIVE_JOB = None
@@ -508,16 +509,7 @@ class CADBatch:
 
 def kill_process_tree(process):
     """Stop a worker and any variant processes it started."""
-    if process.poll() is not None:return
-    if os.name == 'nt':
-        subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True,
-                       creationflags=subprocess.CREATE_NO_WINDOW)
-    else:
-        process.kill()
-    try:process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+    kill_tree(process)
 
 
 def stop_expired_workers(running, timeout_seconds, tree=False):

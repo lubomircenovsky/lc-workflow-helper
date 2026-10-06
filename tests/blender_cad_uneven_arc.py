@@ -25,3 +25,4 @@ assert [row.index(aliases[i]) for i in ids] == sorted(row.index(aliases[i]) for 
 assert aliases[30] == 20
 assert aliases[40] == 50
 print('CAD_UNEVEN_ARC_ALIAS_OK')
+print('PASS blender_cad_uneven_arc')

@@ -42,3 +42,4 @@ for row in json.loads(fixture.read_text()):
         print('CAD_MEASURED_BENDS_OK',row['name'],len(selected),len(legacy),'->',len(rebuilt))
     finally:
         bpy.data.meshes.remove(mesh)
+print('PASS blender_cad_measured_bends')

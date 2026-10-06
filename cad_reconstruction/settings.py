@@ -52,7 +52,7 @@ class LCW_PG_CADState(bpy.types.PropertyGroup):
     workflow_schema: IntProperty(default=0, options={"HIDDEN"})
     auto_objective: EnumProperty(name="Objective", items=(("LIGHTWEIGHT", "Lightweight", "Choose the validated variant with the fewest triangles; support loops may be omitted"), ("EDITABLE", "Editable", "Prefer reconstructing more regions and keeping support loops around holes; triangle count decides only ties")), default="LIGHTWEIGHT")
     auto_hole_detail_factor: FloatProperty(name="Hole Detail", default=1.0, min=0.1, max=2.0, precision=2)
-    auto_perimeter_clearance_mm: FloatProperty(name="Perimeter Clearance (mm)", description="Nominal circular-hole support clearance; 0 = choose clearance automatically to reduce loop vertices; a positive value is kept", default=0.0, min=0.0, precision=2)
+    auto_perimeter_clearance_mm: FloatProperty(name="Perimeter Clearance (mm)", description="Nominal circular-hole support clearance; 0 = choose clearance automatically to reduce loop vertices; a positive value is preferred and reduced only where a support loop does not fit", default=0.0, min=0.0, precision=2)
     auto_epsilon_mm: FloatProperty(name="Deviation Limit (mm)", default=0.4, min=0.000001)
     auto_hole_epsilon_mm: FloatProperty(name="Hole Deviation (mm)", description="Independent hole tolerance; 0 uses the general limit", default=0.0, min=0.0, precision=3)
     auto_run_settings_open: BoolProperty(name="Run Settings", default=False)

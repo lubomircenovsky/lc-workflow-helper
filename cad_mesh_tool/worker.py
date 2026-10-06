@@ -544,6 +544,19 @@ def main(root, state=None, prepared=None):
     if not separated_solid and not changed_from_source(original_source, final, origin):
         raise ValueError('No selected operation produced a validated geometry change')
     state.update(mesh=final, candidate_to_final=remap, stage='final_validated')
+    protected_marked = {}
+    if locked_cycles:
+        # Carry the user's protection onto both validated results, so a
+        # result used as the next input stays protected.
+        from cad_mesh_tool.protected import mark_output
+
+        to_candidate = candidate['source_to_candidate']
+        protected_marked = dict(
+            checkpoint=mark_output(mesh, locked_cycles, to_candidate),
+            final=mark_output(final, locked_cycles, [remap[i] if i >= 0 else -1 for i in to_candidate]),
+        )
+        if protected_marked['final'] != len(locked_cycles):
+            raise ValueError('Validated protected faces could not be marked on the result')
     write(root, 'straight_walls.json', wall_report)
     write(root, 'perimeters_final.json', final_perimeters)
     write(root, 'validation_final.json', validation_final)
@@ -653,7 +666,8 @@ def main(root, state=None, prepared=None):
         ],
         lost_sharp_edges=lost_sharp_edges,
         **(
-            dict(user_protected_faces=len(locked), user_protected_features=user_protected_features)
+            dict(user_protected_faces=len(locked), user_protected_features=user_protected_features,
+                 user_protected_faces_marked=protected_marked)
             if locked
             else {}
         ),
@@ -727,7 +741,10 @@ def main(root, state=None, prepared=None):
         '',
         f"Selected operations: {', '.join(name for name,enabled in operations.items() if enabled)}.",
         f"Preserve curve segmentation: {preserve_curve_segmentation}.",
-        f"Perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm (0 = automatic; positive values are fixed).",
+        f"Perimeter clearance: {profile.get('perimeter_clearance_mm',0.0):.2f} mm "
+        + ("(0 = automatic; Auto may reduce a positive value when a support loop does not fit)."
+           if profile.get('perimeter_clearance_policy', 'fixed') == 'shrink'
+           else "(0 = automatic; a positive value is kept fixed)."),
         f"Hole detail factor: {profile.get('hole_detail_factor',1.0):.2f}; hole deviation: {profile.get('hole_epsilon_mm',0.0):.3f} mm (0 = general limit).",
         f"Circular holes detected: {operation_results['circular_holes_detected']}.",
         f"Perimeter loops: {created_loops} created, {direct_joins} direct joins without a loop, "

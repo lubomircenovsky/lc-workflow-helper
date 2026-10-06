@@ -131,3 +131,4 @@ for tri in source['triangles']:
     cross=np.cross(p[tri[1]]-p[tri[0]],p[tri[2]]-p[tri[0]])
     assert cross@normal>.99*np.linalg.norm(cross)
 print('CAD_BOUNDARY_RECONSTRUCTION_OK')
+print('PASS blender_cad_boundary_reconstruction')

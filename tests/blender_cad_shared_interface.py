@@ -75,3 +75,4 @@ try:
     print('CAD_SHARED_INTERFACE_OK')
 finally:
     addon.unregister()
+print('PASS blender_cad_shared_interface')

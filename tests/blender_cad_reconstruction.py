@@ -214,3 +214,4 @@ finally:
     with RestrictBlend():
         addon.unregister()
     print("CAD_UNREGISTER_OK")
+print('PASS blender_cad_reconstruction')

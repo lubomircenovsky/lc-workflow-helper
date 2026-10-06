@@ -131,3 +131,4 @@ try:
         print('CAD_ANALYSIS_CANCEL_OK')
 finally:
     addon.unregister()
+print('PASS blender_cad_detail_analysis')

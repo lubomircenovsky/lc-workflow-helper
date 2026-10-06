@@ -64,3 +64,4 @@ final = validate(
 assert all(final["checks"].values()), final["checks"]
 assert not topology_problem(obj)
 print("CAD_ARC_OK", len(arcs), [(item["segments_before"], item["segments"]) for item in arcs])
+print('PASS blender_cad_arc')

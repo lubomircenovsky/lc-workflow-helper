@@ -18,6 +18,7 @@ from cad_mesh_tool.artifacts import publish_json
 from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, solid_order, objective_name
 from cad_mesh_tool.geometry import topology
 from cad_mesh_tool.operations import decision
+from cad_mesh_tool.processes import kill as kill_process, spawn_options
 from cad_mesh_tool.solids import solid_partitions, extract_component
 from cad_mesh_tool.worker import main as run_variant, prepare_source, source_digest
 
@@ -180,13 +181,29 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
             with prepared_path.open('wb') as stream:pickle.dump(prepared, stream)
         directory = prepare_directory(order, label, operations, preserve,
                                       dict(prepared_path=str(prepared_path)))
-        log = (directory/'worker.log').open('w', encoding='utf8')
-        process = subprocess.Popen([bpy.app.binary_path, '--background', '--factory-startup',
-            '--python-exit-code', '1', '--python', str(Path(__file__).with_name('worker.py')), '--', str(directory)],
-            stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
-        log.close()
+        try:
+            with (directory/'worker.log').open('w', encoding='utf8') as log:
+                # Variants stay in this worker's process group, so stopping
+                # the Auto worker's tree also stops them.
+                process = subprocess.Popen([bpy.app.binary_path, '--background', '--factory-startup',
+                    '--python-exit-code', '1', '--python', str(Path(__file__).with_name('worker.py')),
+                    '--', str(directory)],
+                    stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, **spawn_options())
+        except BaseException:
+            release_slot(slot)
+            raise
         children[order] = (process, slot, (order, label, operations, preserve), directory)
+
+    def stop_children():
+        # Any exception (failed start, failed result handling, interrupt)
+        # must not leave variant processes running or slots claimed.
+        running = list(children.values()) + ([speculative] if speculative is not None else [])
+        children.clear()
+        for process, slot, _, _ in running:
+            try:
+                kill_process(process)
+            finally:
+                release_slot(slot)
 
     # Large solids run every variant in a child process: this process keeps
     # one of them on its own slot and starts the others whenever the batch
@@ -199,60 +216,64 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
     # rule (auto_policy.fallback_variant) asks for it; otherwise discarded.
     possible = fallback_variant(features, [dict(variant='full', status='FAIL')]) if use_children else None
     speculative = None
-    while True:
-        if use_children:
-            while pending:
-                own = not any(slot is None for _, slot, _, _ in children.values())
-                slot = None if own else acquire_slot(profile)
-                if not own and slot is None:break
-                launch(*pending.pop(0), slot)
-            if (not pending and possible is not None and speculative is None and not fallback_checked
-                    and len(choices) < 4 and not any(c[1] == possible[0] for c in choices)):
-                slot = acquire_slot(profile)
-                if slot is not None:
-                    launch(len(choices), *possible, slot)
-                    speculative = children.pop(len(choices))
-            if pending or children:
-                collect()
-                time.sleep(.2)
+    try:
+        while True:
+            if use_children:
+                while pending:
+                    own = not any(slot is None for _, slot, _, _ in children.values())
+                    slot = None if own else acquire_slot(profile)
+                    if not own and slot is None:break
+                    launch(*pending.pop(0), slot)
+                if (not pending and possible is not None and speculative is None and not fallback_checked
+                        and len(choices) < 4 and not any(c[1] == possible[0] for c in choices)):
+                    slot = acquire_slot(profile)
+                    if slot is not None:
+                        launch(len(choices), *possible, slot)
+                        speculative = children.pop(len(choices))
+                if pending or children:
+                    collect()
+                    time.sleep(.2)
+                    continue
+            elif pending:
+                order, label, operations, preserve = pending.pop(0)
+                directory = prepare_directory(order, label, operations, preserve)
+                objects_before = set(bpy.data.objects)
+                meshes_before = set(bpy.data.meshes)
+                state = {}
+                error = trace = None
+                try:
+                    run_variant(directory, state, prepared)
+                except Exception as failure:
+                    error, trace = str(failure), traceback.format_exc()
+                finally:
+                    for obj in set(bpy.data.objects)-objects_before:bpy.data.objects.remove(obj, do_unlink=True)
+                    for mesh in set(bpy.data.meshes)-meshes_before:
+                        if mesh.users == 0:bpy.data.meshes.remove(mesh)
+                finish(order, label, operations, preserve, directory, error, state.get('stage', 'startup'), trace)
                 continue
-        elif pending:
-            order, label, operations, preserve = pending.pop(0)
-            directory = prepare_directory(order, label, operations, preserve)
-            objects_before = set(bpy.data.objects)
-            meshes_before = set(bpy.data.meshes)
-            state = {}
-            error = trace = None
-            try:
-                run_variant(directory, state, prepared)
-            except Exception as failure:
-                error, trace = str(failure), traceback.format_exc()
-            finally:
-                for obj in set(bpy.data.objects)-objects_before:bpy.data.objects.remove(obj, do_unlink=True)
-                for mesh in set(bpy.data.meshes)-meshes_before:
-                    if mesh.users == 0:bpy.data.meshes.remove(mesh)
-            finish(order, label, operations, preserve, directory, error, state.get('stage', 'startup'), trace)
-            continue
-        if fallback_checked or len(choices) >= 4:break
-        fallback_checked = True
-        fallback = fallback_variant(features, item['trials'])
-        if fallback is None or any(c[1] == fallback[0] for c in choices):
+            if fallback_checked or len(choices) >= 4:break
+            fallback_checked = True
+            fallback = fallback_variant(features, item['trials'])
+            if fallback is None or any(c[1] == fallback[0] for c in choices):
+                if speculative is not None:
+                    process, slot, _, directory = speculative
+                    speculative = None
+                    try:
+                        kill_process(process)
+                    finally:
+                        release_slot(slot)
+                    shutil.rmtree(directory, ignore_errors=True)
+                break
+            choice = (len(choices),)+fallback
+            choices.append(choice)
             if speculative is not None:
-                process, slot, _, directory = speculative
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
-                release_slot(slot)
-                shutil.rmtree(directory, ignore_errors=True)
-            break
-        choice = (len(choices),)+fallback
-        choices.append(choice)
-        if speculative is not None:
-            # Same order, label and options as the speculative run.
-            children[choice[0]] = speculative
-            speculative = None
-            continue
-        pending.append(choice)
+                # Same order, label and options as the speculative run.
+                children[choice[0]] = speculative
+                speculative = None
+                continue
+            pending.append(choice)
+    finally:
+        stop_children()
     select_winner(item, objective)
     item['seconds'] = time.perf_counter()-started
     return item

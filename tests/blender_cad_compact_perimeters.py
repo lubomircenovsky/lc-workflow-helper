@@ -69,3 +69,4 @@ if '--' in sys.argv:
     assert all(not candidate['topology'][k] for k in ('boundary','nonmanifold','winding','duplicates'))
     assert all(math.isclose(p['clearance_m'],.004,abs_tol=1e-12) for p in candidate['perimeters'])
 print('CAD_COMPACT_PERIMETERS_OK', len(manual), len(auto))
+print('PASS blender_cad_compact_perimeters')

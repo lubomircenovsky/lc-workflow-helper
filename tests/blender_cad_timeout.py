@@ -59,3 +59,4 @@ try:
     print('CAD_TIMEOUT_POWER_ANALYSIS_OK')
 finally:
     addon.unregister()
+print('PASS blender_cad_timeout')

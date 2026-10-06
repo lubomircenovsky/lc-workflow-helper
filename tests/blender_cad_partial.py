@@ -86,3 +86,4 @@ with tempfile.TemporaryDirectory() as directory:
     assert fingerprint(source_object) == before
     assert output.data is not source_object.data
     print('CAD_PARTIAL_OK', manifest['recovery_attempts'], manifest['skipped_features'])
+print('PASS blender_cad_partial')

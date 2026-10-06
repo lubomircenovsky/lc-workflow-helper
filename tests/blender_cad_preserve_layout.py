@@ -107,3 +107,4 @@ with tempfile.TemporaryDirectory() as directory:
         assert "Enable at least one" in str(exc)
     else:
         raise AssertionError("Preserve option must not count as an operation")
+print('PASS blender_cad_preserve_layout')

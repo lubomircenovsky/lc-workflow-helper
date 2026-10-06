@@ -176,3 +176,4 @@ try:
 finally:
     with RestrictBlend():
         addon.unregister()
+print('PASS blender_cad_nonmanifold')
