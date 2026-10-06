@@ -34,13 +34,32 @@ def fallback_variant(features, trials):
     return None
 
 
-def rank(trial):
-    return (trial['triangles'], -trial['reduced'], -trial['accepted'], trial['order'])
+OBJECTIVES = ('LIGHTWEIGHT', 'EDITABLE')
 
 
-def winner(trials):
+def objective_name(value=None):
+    value = value or 'LIGHTWEIGHT'
+    if value not in OBJECTIVES:
+        raise ValueError(f'Unknown Auto objective: {value}')
+    return value
+
+
+def rank(trial, objective='LIGHTWEIGHT'):
+    """Lower is better. Every ranked trial already passed full validation.
+
+    LIGHTWEIGHT: fewest final triangles, then more reduced/reconstructed regions.
+    EDITABLE: fewest retained regions, then more support loops around holes,
+    then the LIGHTWEIGHT order. Triangle count no longer outranks loops.
+    """
+    lightweight = (trial['triangles'], -trial['reduced'], -trial['accepted'], trial['order'])
+    if objective_name(objective) == 'EDITABLE':
+        return (len(trial.get('untreated', ())), -trial.get('loops', 0)) + lightweight
+    return lightweight
+
+
+def winner(trials, objective='LIGHTWEIGHT'):
     passed = [t for t in trials if t['status'] != 'FAIL']
-    return min(passed, key=rank) if passed else None
+    return min(passed, key=lambda trial: rank(trial, objective)) if passed else None
 
 
 def completed_bodies(report, timed_out=False, interrupted_reason=None,

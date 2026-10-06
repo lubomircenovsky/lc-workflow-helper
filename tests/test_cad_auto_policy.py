@@ -1,5 +1,5 @@
 import unittest
-from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, completed_bodies, solid_order
+from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, completed_bodies, solid_order, objective_name
 
 
 class AutoPolicyTests(unittest.TestCase):
@@ -51,6 +51,21 @@ class AutoPolicyTests(unittest.TestCase):
         self.assertIs(winner([small,tied]), tied)
         accepted = dict(tied, accepted=3, order=3)
         self.assertIs(winner([small,tied,accepted]), accepted)
+
+
+    def test_editable_objective_prefers_coverage_then_loops(self):
+        full = dict(variant='full', status='PASS', triangles=100, reduced=5, accepted=6, order=1,
+                    untreated=[], loops=0)
+        loops = dict(full, variant='full_loops', triangles=140, loops=8, order=2)
+        partial = dict(full, variant='keep_segments', triangles=60, untreated=[1, 2], order=0)
+        self.assertIs(winner([partial, full, loops]), partial)
+        self.assertIs(winner([partial, full, loops], 'LIGHTWEIGHT'), partial)
+        self.assertIs(winner([partial, full, loops], 'EDITABLE'), loops)
+        fewer_loops_better_coverage = dict(loops, untreated=[3])
+        self.assertIs(winner([full, fewer_loops_better_coverage], 'EDITABLE'), full)
+        self.assertIsNone(winner([dict(full, status='FAIL')], 'EDITABLE'))
+        self.assertEqual(objective_name(None), 'LIGHTWEIGHT')
+        with self.assertRaises(ValueError):objective_name('FAST')
 
 
 if __name__ == '__main__':unittest.main()

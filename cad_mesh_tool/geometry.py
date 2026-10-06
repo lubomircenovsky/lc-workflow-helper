@@ -2,6 +2,7 @@
 import math
 from collections import defaultdict, Counter
 import numpy as np
+from .errors import GeometricConflict
 
 
 def unit(v):
@@ -20,12 +21,24 @@ def basis(axis):
 
 
 def face_normals(v, faces):
-    result = []
-    for f in faces:
+    """Unit Newell-style fan normals. Triangles are batched; the per-face
+    arithmetic (cross product, x.dot(x) norm, division) is unchanged."""
+    v = np.asarray(v, dtype=float)
+    result = np.empty((len(faces), 3))
+    triangles = [index for index, f in enumerate(faces) if len(f) == 3]
+    if triangles:
+        p = v[np.asarray([faces[index] for index in triangles])]
+        # '+ 0.0' matches the reference .sum(0), which turns -0.0 into +0.0.
+        normals = np.cross(p[:, 1] - p[:, 0], p[:, 2] - p[:, 0]) + 0.0
+        for row, index in zip(normals, triangles):
+            result[index] = row / max(np.sqrt(row.dot(row)), 1e-30)
+    for index, f in enumerate(faces):
+        if len(f) == 3:
+            continue
         p = v[f]
         n = np.cross(p[1:-1] - p[0], p[2:] - p[0]).sum(0)
-        result.append(n / max(np.linalg.norm(n), 1e-30))
-    return np.array(result)
+        result[index] = n / max(np.linalg.norm(n), 1e-30)
+    return result
 
 
 def adjacency(faces):
@@ -47,7 +60,7 @@ def loops(faces):
         if count == 1:
             graph[a].append(b); graph[b].append(a)
     if any(len(v) != 2 for v in graph.values()):
-        raise ValueError('Region boundary branches or is open')
+        raise GeometricConflict('Region boundary branches or is open')
     used, result = set(), []
     for start in sorted(graph):
         if start in used:
@@ -58,7 +71,7 @@ def loops(faces):
             nxt = next(x for x in sorted(graph[cur]) if x != prev)
             prev, cur = cur, nxt
         if cur != start:
-            raise ValueError('Non-simple boundary')
+            raise GeometricConflict('Non-simple boundary')
         result.append(ring)
     return result
 
@@ -188,13 +201,13 @@ def expanded_edge_chain(splits, a, b, path=frozenset()):
     chain=splits.get(edge,[a,b])
     if chain==[a,b]:return chain
     if edge in path or chain[0]!=a or chain[-1]!=b or len(set(chain))!=len(chain):
-        raise ValueError('Conflicting nested edge subdivisions')
+        raise GeometricConflict('Conflicting nested edge subdivisions')
     result=[]
     for x,y in zip(chain,chain[1:]):
         result.extend(expanded_edge_chain(splits,x,y,path|{edge})[:-1])
     result.append(b)
     if len(set(result))!=len(result):
-        raise ValueError('Self-touching nested edge subdivisions')
+        raise GeometricConflict('Self-touching nested edge subdivisions')
     return result
 
 

@@ -2,6 +2,7 @@
 
 import unittest
 
+from cad_mesh_tool.errors import GeometricConflict
 from cad_mesh_tool.operations import DEFAULTS, decision, normalize
 from cad_mesh_tool.recovery import decisions, recover
 from cad_mesh_tool.reporting import explain, skipped_summary
@@ -22,7 +23,7 @@ class OperationTests(unittest.TestCase):
         def attempt(selected):
             calls.append([(f['id'],f['decision']) for f in selected])
             if any(f['id']==3 for f in selected):
-                raise ValueError('Conflicting shared analytic endpoint')
+                raise GeometricConflict('Conflicting shared analytic endpoint')
             return [f['id'] for f in selected if f['decision']=='REBUILD']
         result,skipped,count=recover(features,DEFAULTS,attempt,lambda _:None,max_attempts=4)
         self.assertEqual(result,[0,1,2])
@@ -40,7 +41,7 @@ class OperationTests(unittest.TestCase):
                                 measured_axis=True)]
         def attempt(selected):
             choices={f['id']:f['decision'] for f in selected}
-            if 5 in choices:raise ValueError('Conflicting shared analytic endpoint')
+            if 5 in choices:raise GeometricConflict('Conflicting shared analytic endpoint')
             self.assertEqual(choices[3],'DISABLED')
             self.assertEqual(choices[4],'SKIP')
             return choices
@@ -56,7 +57,7 @@ class OperationTests(unittest.TestCase):
         def attempt(selected):
             ids={f['id'] for f in selected if f['decision']=='REBUILD'}
             if 2 in ids or bool(0 in ids)!=bool(1 in ids):
-                raise ValueError('Protected dependency conflicts')
+                raise GeometricConflict('Protected dependency conflicts')
             return ids
         result,skipped,_=recover(features,DEFAULTS,attempt,lambda _result:None)
         self.assertEqual(result,{0,1})
@@ -104,7 +105,7 @@ class OperationTests(unittest.TestCase):
             selected = tuple(f['id'] for f in features if f['decision'] == 'REBUILD')
             calls.append(selected)
             if 1 in selected:
-                raise ValueError('UNRESOLVED_PERIMETER: synthetic obstacle')
+                raise GeometricConflict('UNRESOLVED_PERIMETER: synthetic obstacle')
             return selected
 
         result, skipped, count = recover(FEATURES, DEFAULTS, attempt, lambda _result: None)
@@ -122,7 +123,7 @@ class OperationTests(unittest.TestCase):
         def attempt(features):
             selected = tuple(f['id'] for f in features if f['decision'] == 'REBUILD')
             if 1 in selected:
-                raise ValueError('UNRESOLVED_PERIMETER: synthetic obstacle')
+                raise GeometricConflict('UNRESOLVED_PERIMETER: synthetic obstacle')
             return selected
 
         result, skipped, count = recover(FEATURES, DEFAULTS, attempt, lambda _result: None,

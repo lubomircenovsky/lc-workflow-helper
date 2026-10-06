@@ -1,29 +1,12 @@
 """Bounded deterministic retries of independently selectable CAD features."""
 
+from .errors import GeometricConflict
 from .operations import decision
 
 
-RECOVERABLE_PREFIXES = (
-    "UNRESOLVED_PERIMETER", "Candidate topology failed", "Protected feature geometry changed",
-    "Protected dependency conflicts",
-    "Checkpoint validation failed", "Blender had to repair candidate mesh",
-    "Too few independent rim samples", "No ordered rim sample mapping",
-    "Conflicting shared", "Shared retained/deleted", "Unmapped nonplanar",
-    "Transition contraction", "Unsupported nonplanar incident patch",
-    "Planar boundary contraction", "Collapsed incident patch", "Planar coverage mismatch",
-    "Cannot propagate a perimeter subdivision", "CDT created ambiguous",
-    "Branching cylinder", "Expected two cylinder", "Cylinder end contour",
-    "Degenerate face",
-    "Protected non-manifold region changed",
-    "Material boundary in planar patch", "Shading boundary in planar patch",
-    "Region boundary branches or is open", "Non-simple boundary",
-    "Measured cylinder end contours", "Conflicting nested edge subdivisions",
-    "Self-touching nested edge subdivisions", "Cannot propagate subdivisions",
-)
-
-
 def is_geometric_conflict(error):
-    return isinstance(error, ValueError) and str(error).startswith(RECOVERABLE_PREFIXES)
+    """True for candidate conflicts that a smaller feature selection may avoid."""
+    return isinstance(error, GeometricConflict)
 
 
 def decisions(features, operations, accepted=None, reasons=None,

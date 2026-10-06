@@ -11,14 +11,11 @@ import bpy
 import numpy as np
 from cad_mesh_tool.api import code_hash
 from cad_mesh_tool.artifacts import publish_json
-from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, solid_order
-from cad_mesh_tool.detect import discover
+from cad_mesh_tool.auto_policy import variants, fallback_variant, winner, solid_order, objective_name
 from cad_mesh_tool.geometry import topology
-from cad_mesh_tool.intersections import intersections
 from cad_mesh_tool.operations import decision
 from cad_mesh_tool.solids import solid_partitions, extract_component
-from cad_mesh_tool.source_repair import repair_collinear_faces
-from cad_mesh_tool.worker import main as run_variant
+from cad_mesh_tool.worker import main as run_variant, prepare_source, source_digest
 
 
 def read(path):
@@ -29,14 +26,18 @@ def publish(root, report):
     publish_json(root/'auto_manifest.json', report)
 
 
-def select_winner(item):
-    best = winner(item['trials'])
+def select_winner(item, objective='LIGHTWEIGHT'):
+    best = winner(item['trials'], objective)
+    item['objective'] = objective
     if best:
         item.update(status=best['status'], winner=best['path'], selected_variant=best['variant'],
                     detected=best['detected'], accepted=best['accepted'], reduced=best['reduced'],
                     untreated=best['untreated'], before=best['before'], triangles=best['triangles'],
                     loops=best['loops'], result_sha256=best['result_sha256'])
-        item['reason'] = ('Lowest final triangle count among validated variants; ties prefer more reduced and reconstructed regions. '
+        criterion = ('Editable objective: fewest retained regions, then most support loops, then fewest triangles. '
+                     if objective == 'EDITABLE' else
+                     'Lowest final triangle count among validated variants; ties prefer more reduced and reconstructed regions. ')
+        item['reason'] = (criterion
                           + ('Support loops omitted to minimize polygons. ' if best['variant'] != 'full_loops' else 'Support loops retained. ')
                           + f"{best['accepted']}/{best['detected']} regions reconstructed; {best['reduced']} reduced; "
                           + f"{len(best['untreated'])} retained; {best['loops']} loops.")
@@ -46,6 +47,7 @@ def select_winner(item):
 def process_body(root, source, profile, index, partition, checkpoint=None):
     started = time.perf_counter()
     item = dict(component_index=index, status='FAIL', trials=[], winner=None)
+    objective = objective_name(profile.get('auto_objective'))
     body = extract_component(source, partition['faces'], partition['reversed_faces'])
     counts = topology(body['faces'])
     item['topology'] = counts
@@ -53,15 +55,18 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
     if any(counts[k] for k in ('boundary', 'winding', 'duplicates')):
         item['reason'] = 'Source solid has open boundaries, winding errors or duplicate faces.'
         return item
-    vertices = np.asarray(body['vertices'])
-    hits = intersections(vertices-vertices.mean(0), np.asarray(body['triangles']))
+    # One detection pass per solid. Every variant receives the same immutable
+    # source text and verifies the prepared plan against its digest.
+    body_text = json.dumps(body)
+    prepared = prepare_source(json.loads(body_text), profile)
+    hits = prepared['source_intersections']
     item['source_intersections'] = hits
     if hits['intersections']:
         item['reason'] = f"Source solid has {len(hits['intersections'])} intersecting triangle pairs."
         return item
-    repaired, _ = repair_collinear_faces(body)
-    features = discover(repaired['vertices'], repaired['faces'], profile['epsilon_m'],
-                        profile['hole_detail_factor'], (profile['hole_epsilon_mm']/1000) or None)['features']
+    prepared.update(source_sha256=source_digest(body_text),
+                    profile={k: profile.get(k) for k in ('epsilon_m', 'hole_detail_factor', 'hole_epsilon_mm')})
+    features = prepared['discovery']['features']
     item['detected'] = len(features)
     choices = variants(features)
     for order in range(4):
@@ -76,7 +81,7 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
                        preserve_curve_segmentation=preserve, preserve_nonmanifold=item['guarded'],
                        component_index=index, shared_interface_reversed_faces=partition['reversed_faces'],
                        straight_walls=dict(enabled=True, normal_limit_deg=None))
-        (directory/'source.json').write_text(json.dumps(body), encoding='utf8')
+        (directory/'source.json').write_text(body_text, encoding='utf8')
         (directory/'profile.json').write_text(json.dumps(options, indent=2), encoding='utf8')
         trial = dict(variant=label, order=order, path=str(directory.relative_to(root)), status='FAIL')
         print('AUTO_VARIANT', index, label, flush=True)
@@ -84,7 +89,7 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
         meshes_before = set(bpy.data.meshes)
         state = {}
         try:
-            run_variant(directory, state)
+            run_variant(directory, state, prepared)
             manifest = read(directory/'manifest.json')
             validation = read(directory/'validation_final.json')
             if manifest['geometry_status'] != 'PASS' or not all(validation['checks'].values()):
@@ -94,7 +99,9 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
             untreated = [f['id'] for f in plan if f['id'] in skipped or
                          decision(f['category'], operations, preserve) != 'REBUILD']
             accepted = len(plan)-len(untreated)
-            partial = manifest['partial'] or bool(untreated)
+            # User-protected features are intentionally untreated, not a finding.
+            intended = set(manifest.get('user_protected_features', ()))
+            partial = manifest['partial'] or any(f not in intended for f in untreated)
             trial.update(status='REVIEW' if partial else 'PASS', triangles=manifest['final']['t'],
                          before=manifest['before']['t'], reduced=manifest['operation_results']['curves_reduced'],
                          accepted=accepted, detected=len(plan), skipped=len(skipped),
@@ -110,11 +117,11 @@ def process_body(root, source, profile, index, partition, checkpoint=None):
             for mesh in set(bpy.data.meshes)-meshes_before:
                 if mesh.users == 0:bpy.data.meshes.remove(mesh)
         item['trials'].append(trial)
-        select_winner(item)
+        select_winner(item, objective)
         item['seconds'] = time.perf_counter()-started
         if checkpoint is not None:
             checkpoint(item)
-    select_winner(item)
+    select_winner(item, objective)
     item['seconds'] = time.perf_counter()-started
     return item
 

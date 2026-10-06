@@ -25,6 +25,7 @@ EXPLANATIONS = (
      'source custom normals are already ignored.'),
     ('Straight wall cleanup', 'Merging straight walls did not preserve the validated geometry.'),
     ('Protected faces lost', 'Cleanup would remove geometry that must remain unchanged.'),
+    ('Touches a user-protected region', 'You protected this area; it was kept exactly as authored.'),
 )
 
 

@@ -176,4 +176,7 @@ def extract_component(snapshot, face_ids, reversed_faces=()):
         result['reversed_source_faces'] = sorted(reversed_faces)
     if snapshot.get('cad_roles') is not None:
         result['cad_roles']=[snapshot['cad_roles'][fi] for fi in face_ids]
+    if snapshot.get('user_protected_faces'):
+        locked = set(snapshot['user_protected_faces'])
+        result['user_protected_faces'] = [index for index, fi in enumerate(face_ids) if fi in locked]
     return result

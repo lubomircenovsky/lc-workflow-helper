@@ -63,18 +63,35 @@ def _tree_squared(points, triangles, low, high, tree, upper):
     return values
 
 
+def _spatial_order(points, bits=10):
+    """Morton (Z-order) permutation of points; ties keep their input order."""
+    low = points.min(axis=0)
+    span = np.maximum(points.max(axis=0) - low, 1e-300)
+    cells = np.clip(((points - low) / span * ((1 << bits) - 1)).astype(np.int64), 0, (1 << bits) - 1)
+    code = np.zeros(len(points), dtype=np.int64)
+    for bit in range(bits):
+        for axis in range(3):
+            code |= ((cells[:, axis] >> bit) & 1) << (3 * bit + axis)
+    return np.argsort(code, kind='stable')
+
+
 def accurate_distances(points,triangles,bvh):
     from mathutils import Vector
     low=triangles.min(axis=1);high=triangles.max(axis=1)
     values=np.full(len(points),np.inf,dtype=float)
     if len(triangles) >= 2048 and len(points):
         tree = _candidate_tree(low, high)
-        for start in range(0, len(points), 256):
-            batch = points[start:start + 256]
+        # Each point's exact minimum depends only on that point and its own
+        # upper bound, so the visiting order is free. Spatially coherent
+        # batches (Morton order) share tree nodes and leaves, which removes
+        # most per-node NumPy overhead without changing any value.
+        order = _spatial_order(points)
+        for start in range(0, len(points), 4096):
+            ids = order[start:start + 4096]
+            batch = points[ids]
             nearest = np.asarray([bvh.find_nearest(Vector(point))[2] for point in batch], dtype=int)
             upper = point_triangles_squared(batch, triangles[nearest])
-            values[start:start + len(batch)] = _tree_squared(
-                batch, triangles, low, high, tree, upper)
+            values[ids] = _tree_squared(batch, triangles, low, high, tree, upper)
         return np.sqrt(values)
     # Keep the exact float64 candidate test, but avoid thousands of tiny NumPy calls.
     for start in range(0,len(points),16):

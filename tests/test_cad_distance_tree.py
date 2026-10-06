@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from cad_mesh_tool.precise_distance import (
-    _candidate_tree, _tree_squared, point_triangles_squared,
+    _candidate_tree, _spatial_order, _tree_squared, point_triangles_squared,
 )
 
 
@@ -18,6 +18,22 @@ class DistanceTreeTests(unittest.TestCase):
             ids = np.flatnonzero(np.sum(separation * separation, axis=1) <= bound + 1e-16)
             expected.append(point_triangles_squared(point, triangles[ids]).min())
         np.testing.assert_array_equal(actual, expected)
+
+    def test_spatial_batches_do_not_change_exact_minima(self):
+        rng = np.random.default_rng(77)
+        triangles = rng.uniform(-1, 1, (3000, 1, 3)) + rng.normal(0, .05, (3000, 3, 3))
+        points = rng.uniform(-1, 1, (900, 3))
+        order = _spatial_order(points)
+        self.assertEqual(sorted(order.tolist()), list(range(len(points))))
+        low, high = triangles.min(axis=1), triangles.max(axis=1)
+        tree = _candidate_tree(low, high)
+        upper = point_triangles_squared(points, triangles[rng.integers(len(triangles), size=len(points))])
+        direct = _tree_squared(points, triangles, low, high, tree, upper)
+        batched = np.empty_like(direct)
+        for start in range(0, len(points), 128):
+            ids = order[start:start + 128]
+            batched[ids] = _tree_squared(points[ids], triangles, low, high, tree, upper[ids])
+        np.testing.assert_array_equal(batched, direct)
 
     def test_distributed_skinny_and_degenerate_triangles(self):
         rng = np.random.default_rng(4202)

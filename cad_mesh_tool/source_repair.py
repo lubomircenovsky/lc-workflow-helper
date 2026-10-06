@@ -77,7 +77,10 @@ def repair_collinear_faces(snapshot):
     roles = snapshot.get('cad_roles')
     if roles is not None and any(roles[fi] not in ('UNCLASSIFIED','BACKGROUND_PLANE') for fi in affected):
         raise ValueError('Source degenerate triangles touch a protected CAD region')
-    result, materials, source_ids, new_roles = [], [], [], []
+    locked = set(snapshot.get('user_protected_faces') or ())
+    if locked & affected:
+        raise ValueError('Source degenerate triangles touch a user-protected region; repair the source')
+    result, materials, source_ids, new_roles, new_locked = [], [], [], [], []
     original_ids = snapshot.get('source_face_ids', list(range(len(faces))))
     for fi, face in enumerate(faces):
         if fi in bad:
@@ -93,6 +96,8 @@ def repair_collinear_faces(snapshot):
             third = next(vi for vi in face if vi not in edge)
             chain = [x] + middle + [y]
             pieces = [[a,b,third] for a,b in zip(chain, chain[1:])]
+        if fi in locked:
+            new_locked.append(len(result))
         result.extend(pieces)
         materials.extend([snapshot['materials'][fi]] * len(pieces))
         source_ids.extend([original_ids[fi]] * len(pieces))
@@ -112,7 +117,10 @@ def repair_collinear_faces(snapshot):
                     normals=[normal.tolist() for normal in face_normals(v, result) for _ in range(3)])
     if roles is not None:
         repaired['cad_roles'] = new_roles
+    if locked:
+        repaired['user_protected_faces'] = new_locked
     report = dict(removed_zero_area_faces=[original_ids[fi] for fi in sorted(bad)],
                   subdivided_source_faces=[original_ids[fi] for fi in sorted(cuts)],
                   vertices_moved=0, euler_unchanged=True)
     return repaired, report
+
