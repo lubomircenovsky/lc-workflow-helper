@@ -7,7 +7,7 @@ import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import LC_workflow_addon as addon
-from LC_workflow_addon.cad_reconstruction.panels import LCW_PT_cad_reconstruction
+from LC_workflow_addon.cad_reconstruction.panels import LCW_PT_cad_reconstruction, draw_uv_preparation
 
 
 class OperatorProperties:
@@ -124,6 +124,26 @@ try:
         assert any('protected face' in c[1] for c in calls if c[0] == 'label')
         assert any(objective.title() in c[1] for c in calls if c[0] == 'label')
     print('CAD_PANEL_DRAW_RNA_BRANCHES_OK')
+
+    # The primary action stays visible when every settings section is collapsed.
+    for mode in ('AUTO', 'POWER_USER'):
+        state.workflow_mode = mode
+        state.run_section_open = False
+        state.auto_run_settings_open = False
+        state.uv_prep_section_open = True
+        calls = []
+        with bpy.context.temp_override(area=area):
+            LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(calls, icons)), bpy.context)
+        assert any(c[:2] == ('operator', 'lcw.cad_reconstruct') for c in calls), mode
+        assert not any(c[0] == 'prop' and c[1].startswith('uv_prep') for c in calls), 'UV prep moved to UV panel'
+        assert any(c[:2] == ('operator', 'lcw.cad_object_colors') for c in calls)
+        assert any(c[:2] == ('operator', 'lcw.cad_hide_object_colors') for c in calls)
+    calls = []
+    with bpy.context.temp_override(area=area):
+        draw_uv_preparation(Layout(calls, icons), bpy.context)
+    assert {'uv_prep_map_name', 'uv_prep_margin', 'uv_prep_angle_degrees'} <= {c[1] for c in calls if c[0] == 'prop'}
+    assert any(c[:2] == ('operator', 'lcw.cad_prepare_uv') for c in calls)
+    print('CAD_PANEL_PRIMARY_ACTION_AND_UV_PREP_OK')
 finally:
     addon.unregister()
 print('PASS blender_cad_panel_draw')

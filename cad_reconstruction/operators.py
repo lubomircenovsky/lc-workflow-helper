@@ -130,7 +130,8 @@ class LCW_OT_cad_open_analysis(bpy.types.Operator):
 class LCW_OT_cad_reconstruct(bpy.types.Operator):
     bl_idname = "lcw.cad_reconstruct"
     bl_label = "Reconstruct CAD Meshes"
-    bl_description = "Reconstruct selected CAD operations; source meshes stay unchanged"
+    bl_description = ("Reconstruct selected CAD operations; source meshes stay unchanged. "
+                      "Non-manifold junctions are handled in guarded mode automatically")
     bl_options = {"REGISTER"}
 
     retry_index: IntProperty(default=-1)

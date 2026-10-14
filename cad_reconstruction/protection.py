@@ -11,7 +11,8 @@ from bpy.props import EnumProperty
 from ..cad_mesh_tool.protected import ATTRIBUTE
 
 ACTIONS = (
-    ("PROTECT", "Protect Selected", "Mark the selected faces as protected"),
+    ("PROTECT", "Protect Selected",
+     "Mark the selected faces as protected; they and features touching them stay exactly as authored"),
     ("UNPROTECT", "Unprotect Selected", "Remove protection from the selected faces"),
     ("SELECT", "Select Protected", "Select all protected faces"),
     ("CLEAR", "Clear All", "Remove protection from every face of this mesh"),

@@ -9,7 +9,7 @@ from ..quad_reconstruction.panels import (
     LCW_PT_quad_reconstruction,
     LCW_UL_quad_analysis_results,
 )
-from ..cad_reconstruction.panels import LCW_PT_cad_reconstruction
+from ..cad_reconstruction.panels import LCW_PT_cad_reconstruction, draw_uv_preparation
 from ..babylon_export.panels import LCW_PT_babylon_export, LCW_UL_babylon_materials
 from ..operators.favorites import favorite_action_available
 from ..utils.substance_designer_baker import BAKER_DEFINITIONS, get_export_source
@@ -1197,6 +1197,8 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
                 text="Rename",
                 props={"new_name": state.uv_rename_uv3},
             )
+
+        draw_uv_preparation(layout, context)
 
 
 class LCW_PT_mesh_utilities(LCW_PT_base, bpy.types.Panel):

@@ -5,6 +5,25 @@ import bpy
 from . import jobs, problem_select, protection, status_overlay, ui_text
 
 
+def draw_uv_preparation(layout, context):
+    """CAD UV Preparation controls, drawn inside the UV panel (no CAD run needed)."""
+    state = context.scene.lcw_cad_reconstruction
+    busy = jobs.ACTIVE_JOB is not None or state.analysis_running or state.cleanup_running
+    box = _section(layout, state, "uv_prep_section_open", "CAD UV Preparation", "GROUP_UVS")
+    if box is None:
+        return
+    settings = box.column(align=True)
+    settings.enabled = not busy
+    settings.prop(state, "uv_prep_map_name")
+    settings.prop(state, "uv_prep_margin")
+    settings.prop(state, "uv_prep_angle_degrees")
+    actions = settings.row(align=True)
+    actions.operator("lcw.cad_analyze_uv", text="Analyze", icon="VIEWZOOM")
+    actions.operator("lcw.cad_prepare_uv", text="Generate UV", icon="GROUP_UVS")
+    for line in ui_text.lines(state.uv_prep_summary):
+        box.label(text=line)
+
+
 def _section(layout, state, property_name, label, icon):
     box = layout.box()
     row = box.row(align=True)
@@ -67,8 +86,6 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             row = actions.row(align=True)
             row.operator("lcw.cad_protect_faces", text="Select", icon="RESTRICT_SELECT_OFF").action = "SELECT"
             row.operator("lcw.cad_protect_faces", text="Clear", icon="X").action = "CLEAR"
-            for line in ui_text.lines("Protected faces and features touching them stay exactly as authored."):
-                box.label(text=line, icon="INFO")
 
         if auto:
             box = layout.box()
@@ -122,94 +139,80 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                         advanced.label(text="Other geometry checks still apply.", icon="INFO")
                         advanced.prop(state, "normal_risk_ack")
 
-        box = _section(layout, state, "run_section_open", "Run", "PLAY")
-        if box is not None:
-            if auto:
-                advanced = _section(box, state, "auto_run_settings_open", "Run Settings", "PREFERENCES")
-                if advanced is not None:
-                    controls = advanced.column(align=True)
-                    controls.enabled = not busy
-                    controls.prop(state, "run_root")
-                    controls.prop(state, "concurrent_workers")
-                    controls.prop(state, "worker_timeout_minutes")
-                action = box.row()
-                action.enabled = not busy
-                action.operator("lcw.cad_reconstruct", text="Analyze & Reconstruct", icon="MOD_REMESH")
-                if running:box.operator("lcw.cad_cancel", icon="CANCEL")
-            else:
-                worker_row = box.column(align=True)
-                worker_row.enabled = not busy
-                worker_row.prop(state, "concurrent_workers")
-                worker_row.prop(state, "worker_timeout_minutes")
-                if state.concurrent_workers >= 8:
-                    box.label(text="8+ Blender processes can exhaust RAM.", icon="ERROR")
-                row = box.row(align=True)
-                row.enabled = not busy
-                row.operator("lcw.cad_analyze", text="Analyze", icon="VIEWZOOM")
-                row.operator("lcw.cad_reconstruct", text="Reconstruct", icon="MOD_REMESH")
-                box.label(text="Non-manifold junctions: automatic guarded mode.", icon="INFO")
-                if running:
-                    box.operator("lcw.cad_cancel", icon="CANCEL")
-                analysis = box.box()
-                analysis.label(text="Last Analysis", icon="VIEWZOOM")
-                if state.analysis_running:
-                    analysis.label(text="Checking geometry and screening profiles...", icon="TIME")
-                elif not state.analysis_ready:
-                    analysis.label(text="Not checked yet. Select input, then Analyze.")
-                else:
-                    mesh_label = "mesh" if state.analysis_meshes == 1 else "meshes"
-                    analysis.label(text=f"{state.analysis_meshes} {mesh_label} | {state.analysis_blockers} blocked | "
-                                        f"{state.analysis_notes} notes",
-                                   icon="ERROR" if state.analysis_blockers else "CHECKMARK")
-                    count = len(state.analysis_lines)
-                    visible = count if state.analysis_details_open else min(count, 3)
-                    for index in range(visible):
-                        item = state.analysis_lines[index]
-                        for line in ui_text.lines(item.message):
-                            analysis.label(text=line, icon="ERROR" if item.severity == "BLOCKER" else "INFO")
-                        if item.recommendation:
-                            action = analysis.row()
-                            action.enabled = not busy
-                            action.operator("lcw.cad_apply_recommendation", text="Use Suggested Settings").analysis_index = index
-                        if item.run_dir and state.analysis_details_open:
-                            analysis.operator("lcw.cad_open_analysis", text="Analysis Files", icon="FILE_FOLDER").analysis_index = index
-                    if count > 3:
-                        analysis.prop(state, "analysis_details_open", text="Show all notes" if not state.analysis_details_open
-                                      else "Hide extra notes", toggle=True)
-            progress = box.box()
-            progress.label(text="Progress", icon="TIME")
+        # The primary action is always visible: collapsing settings never hides Run.
+        action_box = layout.box()
+        row = action_box.row(align=True)
+        row.scale_y = 1.3
+        row.enabled = not busy
+        if auto:
+            row.operator("lcw.cad_reconstruct", text="Analyze & Reconstruct", icon="MOD_REMESH")
+        else:
+            row.operator("lcw.cad_analyze", text="Analyze", icon="VIEWZOOM")
+            row.operator("lcw.cad_reconstruct", text="Reconstruct", icon="MOD_REMESH")
+        if running:
+            action_box.operator("lcw.cad_cancel", icon="CANCEL")
+        if state.progress:
             for part in state.progress.split(" | "):
                 for line in ui_text.lines(part):
-                    progress.label(text=line)
-            if state.cleanup_running or state.cleanup_progress:
-                box.label(text=state.cleanup_progress, icon="FILE_FOLDER")
+                    action_box.label(text=line, icon="TIME")
+        if state.cleanup_running or state.cleanup_progress:
+            action_box.label(text=state.cleanup_progress, icon="FILE_FOLDER")
 
-        box = _section(layout, state, "uv_prep_section_open", "UV Preparation", "GROUP_UVS")
-        if box is not None:
-            box.label(text="Selected meshes; no CAD run required.", icon="INFO")
-            settings = box.column(align=True)
-            settings.enabled = not busy
-            settings.prop(state, "uv_prep_map_name")
-            settings.prop(state, "uv_prep_margin")
-            settings.prop(state, "uv_prep_angle_degrees")
-            actions = settings.row(align=True)
-            actions.operator("lcw.cad_analyze_uv", text="Analyze", icon="VIEWZOOM")
-            actions.operator("lcw.cad_prepare_uv", text="Generate UV", icon="GROUP_UVS")
-            box.label(text="Old UV maps and mesh seams stay unchanged.", icon="INFO")
-            for line in ui_text.lines(state.uv_prep_summary):
-                box.label(text=line)
+        if auto:
+            settings_box = _section(layout, state, "auto_run_settings_open", "Run Settings", "PREFERENCES")
+        else:
+            settings_box = _section(layout, state, "run_section_open", "Run Settings", "PREFERENCES")
+        if settings_box is not None:
+            controls = settings_box.column(align=True)
+            controls.enabled = not busy
+            if auto:
+                controls.prop(state, "run_root")
+            controls.prop(state, "concurrent_workers")
+            controls.prop(state, "worker_timeout_minutes")
+            if state.concurrent_workers >= 8:
+                settings_box.label(text="8+ Blender processes can exhaust RAM.", icon="ERROR")
+
+        if not auto and (state.analysis_running or state.analysis_ready):
+            analysis = layout.box()
+            analysis.label(text="Last Analysis", icon="VIEWZOOM")
+            if state.analysis_running:
+                analysis.label(text="Checking geometry and screening profiles...", icon="TIME")
+            else:
+                mesh_label = "mesh" if state.analysis_meshes == 1 else "meshes"
+                analysis.label(text=f"{state.analysis_meshes} {mesh_label} | {state.analysis_blockers} blocked | "
+                                    f"{state.analysis_notes} notes",
+                               icon="ERROR" if state.analysis_blockers else "CHECKMARK")
+                count = len(state.analysis_lines)
+                visible = count if state.analysis_details_open else min(count, 3)
+                for index in range(visible):
+                    item = state.analysis_lines[index]
+                    for line in ui_text.lines(item.message):
+                        analysis.label(text=line, icon="ERROR" if item.severity == "BLOCKER" else "INFO")
+                    if item.recommendation:
+                        action = analysis.row()
+                        action.enabled = not busy
+                        action.operator("lcw.cad_apply_recommendation", text="Use Suggested Settings").analysis_index = index
+                    if item.run_dir and state.analysis_details_open:
+                        analysis.operator("lcw.cad_open_analysis", text="Analysis Files", icon="FILE_FOLDER").analysis_index = index
+                if count > 3:
+                    analysis.prop(state, "analysis_details_open", text="Show all notes" if not state.analysis_details_open
+                                  else "Hide extra notes", toggle=True)
 
         box = layout.box()
-        box.label(text="Result Status Colors", icon="SHADING_SOLID")
-        row = box.row(align=True)
-        row.operator("lcw.cad_object_colors", text="Show", icon="HIDE_OFF", depress=status_overlay.is_enabled(context.space_data))
-        row.operator("lcw.cad_hide_object_colors", text="Hide", icon="HIDE_ON", depress=not status_overlay.any_enabled())
-        box.label(text="Hide restores your prior viewport colors.", icon="INFO")
-
-        box = _section(layout, state, "results_section_open", "Results", "OUTLINER_OB_MESH")
-        if box is None:
+        header = box.row(align=True)
+        header.prop(state, "results_section_open", text="", emboss=False,
+                    icon="TRIA_DOWN" if state.results_section_open else "TRIA_RIGHT")
+        header.label(text="Results", icon="OUTLINER_OB_MESH")
+        # Status colors live in the Results header: they only matter for result objects.
+        colors = header.row(align=True)
+        colors.operator("lcw.cad_object_colors", text="", icon="HIDE_OFF",
+                        depress=status_overlay.is_enabled(context.space_data))
+        colors.operator("lcw.cad_hide_object_colors", text="", icon="HIDE_ON",
+                        depress=not status_overlay.any_enabled())
+        if not state.results_section_open:
             return
-        box.label(text=f"{len(state.results)} result(s) saved in this .blend")
+        count = len(state.results)
+        box.label(text=f"{count} result{'' if count == 1 else 's'} saved in this .blend")
         actions = box.row(align=True)
         actions.enabled = not running and not state.cleanup_running and bool(state.results)
         actions.operator("lcw.cad_archive_results", text="Archive & Clear", icon="TEXT")
@@ -217,7 +220,6 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
         delete_row = box.row(align=True)
         delete_row.enabled = not running and not state.cleanup_running
         delete_row.operator("lcw.cad_delete_run_files", text="Delete Run Files", icon="TRASH")
-        box.label(text="Run files: current Run Folder only. Meshes stay.", icon="INFO")
         for index in range(len(state.results) - 1,
                            max(-1, len(state.results) - state.results_visible - 1), -1):
             item = state.results[index]
