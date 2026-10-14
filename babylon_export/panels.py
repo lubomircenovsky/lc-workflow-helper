@@ -1,6 +1,8 @@
 import bpy
 from textwrap import wrap
 from .settings import target_collection
+from .bake import active_job
+from .simplebake_adapter import settings_summary
 from .exporters import selected_exporter, exporter_filepath, MISSING_EXPORT_PATH
 
 
@@ -41,14 +43,33 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         layout.operator('lcw.babylon_refresh_materials', text='Refresh Material List')
         layout.template_list('LCW_UL_babylon_materials', '', settings, 'material_selections',
                              settings, 'material_index', rows=5)
+        job = active_job()
+        sbp = getattr(context.scene, 'SimpleBake_Props', None)  # cheap; no add-on scan in draw()
+        if sbp is not None and job is None:
+            layout.label(text=f'SimpleBake: {settings_summary(sbp)}', icon='TEXTURE')
+        if job is not None:
+            box = layout.box()
+            box.label(text='Baking with SimpleBake...', icon='RENDER_STILL')
+            if job.total_passes:
+                box.progress(factor=max(0, job.pass_index) / job.total_passes,
+                             text=f'Pass {max(1, job.pass_index + 1)}/{job.total_passes}', type='BAR')
+            warning = box.column(align=True)
+            warning.alert = True
+            warning.label(text='Do not edit or save the file', icon='ERROR')
+            warning.label(text='until the bake finishes.')
+            box.operator('lcw.babylon_bake_cancel', text='Cancel After This Pass', icon='CANCEL')
+        else:
+            row = layout.row(align=True)
+            row.scale_y = 1.3
+            row.operator('lcw.babylon_bake', text='Bake', icon='RENDER_STILL').export_after = False
+            row.operator('lcw.babylon_bake', text='Bake & Export', icon='EXPORT').export_after = True
         row = layout.row(align=True)
+        row.enabled = job is None
         row.operator('lcw.babylon_check', text='Check', icon='VIEWZOOM')
         row.operator('lcw.babylon_export', text='Export', icon='EXPORT')
         row.operator('lcw.babylon_cleanup', text='Clean Up', icon='TRASH')
-        # Baking buttons appear with phase 2; until then one note instead of dead buttons.
-        layout.label(text='Baking with SimpleBake: coming in phase 2', icon='INFO')
         box = layout.box()
-        for line in wrap(state.last_report[:180], width=48):
+        for line in wrap(state.last_report[:400], width=48):
             box.label(text=line)
         # Bound cached-report work; no scanning of objects or material graphs.
         for index in range(min(len(state.issues), 6)):

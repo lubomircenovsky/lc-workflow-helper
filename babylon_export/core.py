@@ -56,6 +56,11 @@ def safe_batch_name(collection):
     return re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', collection).strip(' .') or 'Bake'
 
 
+def bake_batch_name(collection):
+    """SimpleBake batch name for a collection: distinct from users' own bakes."""
+    return f'LCW_{safe_batch_name(collection)}'
+
+
 def inspect_glb(data, *, expected_variants=None, baked_suffix="_baked", require_variants=False,
                 expected_baked_materials=None):
     """Check GLB framing and Babylon invariants; return an inspectable report."""

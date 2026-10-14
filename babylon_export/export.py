@@ -80,7 +80,7 @@ def export_collection(collection, settings=None, *, result_info=None):
     cleanup()
     plan = build_bake_plan(collection, export_variants=settings.export_variants)
     baked_objects = plan.baked_objects
-    state = snapshot_state(plan, include_simplebake=False)
+    state = snapshot_state(plan)  # export never touches SimpleBake
     run_id = uuid4().hex
     first_scene = bpy.data.scenes[0]
     exporter = selected_exporter(collection, settings)

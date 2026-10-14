@@ -41,7 +41,7 @@ class BBE_TestSimpleBakeProps(bpy.types.PropertyGroup):
     global_mode: bpy.props.StringProperty(default='PBR', update=count_simplebake_update)
     tex_per_mat: bpy.props.BoolProperty(update=count_simplebake_update)
     selected_col: bpy.props.BoolProperty(update=count_simplebake_update)
-    bgbake: bpy.props.BoolProperty(update=count_simplebake_update)
+    unrelated_setting: bpy.props.BoolProperty(update=count_simplebake_update)
     objects_list: bpy.props.CollectionProperty(type=BBE_TestSimpleBakeObject)
 
 
@@ -57,8 +57,18 @@ class BBE_TestUnnamedGltfHandler(bpy.types.FileHandler):
 
 
 def fake_simplebake_values(group):
-    return (group.global_mode, group.tex_per_mat, group.selected_col, group.bgbake,
+    return (group.global_mode, group.tex_per_mat, group.selected_col, group.unrelated_setting,
             [(item.obj_point, item.name, item.expanded) for item in group.objects_list])
+
+
+class OperatorProps:
+    """Accept only properties the real operator defines."""
+
+    def __init__(self, rna):
+        object.__setattr__(self, 'rna', rna)
+
+    def __setattr__(self, name, value):
+        assert name in self.rna.properties, name
 
 
 class Layout:
@@ -83,8 +93,12 @@ class Layout:
 
     def operator(self, name, **kwargs):
         namespace, operator = name.split('.')
-        getattr(getattr(bpy.ops, namespace), operator).get_rna_type()
+        rna = getattr(getattr(bpy.ops, namespace), operator).get_rna_type()
         self.calls.append(('operator', name, self.enabled))
+        return OperatorProps(rna)
+
+    def progress(self, **kwargs):
+        self.calls.append(('progress', kwargs.get('text')))
 
     def template_list(self, name, identifier, data, propname, active_data, active_propname, **kwargs):
         assert name == 'LCW_UL_babylon_materials'
@@ -248,7 +262,7 @@ def round3_fixture(root=None):
                 assert props['export_texcoords'] and not props['export_draco_mesh_compression_enable']
                 return {'FINISHED'}
             with patch.object(exporting, '_export_gltf', inspect_copies), \
-                    patch.object(export_state, 'bake_properties', side_effect=AssertionError('Export read SimpleBake')):
+                    patch.object(simplebake_adapter, 'bake_properties', side_effect=AssertionError('Export read SimpleBake')):
                 exporting.export_collection(collection)
             assert original_state(objects) == before and context_state() == before_context
             assert_clean()
@@ -320,8 +334,8 @@ assert not any('simplebake' in item.module.lower() for item in bpy.context.prefe
 calls = []
 icons = {item.identifier for item in bpy.types.UILayout.bl_rna.functions['operator'].parameters['icon'].enum_items}
 LCW_PT_babylon_export.draw(SimpleNamespace(layout=Layout(calls)), bpy.context)
-assert all(not enabled for kind, name, enabled in (c for c in calls if c[0] == 'operator')
-           if name == 'lcw.babylon_bake_phase2')
+bake_buttons = [c for c in calls if c[0] == 'operator' and c[1] == 'lcw.babylon_bake']
+assert len(bake_buttons) == 2 and all(enabled for _kind, _name, enabled in bake_buttons), bake_buttons
 print('PASS babylon_panel_factory_startup')
 addon_utils.enable('io_scene_gltf2')
 prefs = bpy.context.preferences.addons['io_scene_gltf2'].preferences
@@ -339,48 +353,22 @@ try:
     fake_sb.global_mode = 'USER_MODE'
     fake_sb.tex_per_mat = True
     fake_sb.selected_col = True
-    fake_sb.bgbake = True
+    fake_sb.unrelated_setting = True
     item = fake_sb.objects_list.add()
     item.obj_point, item.name, item.expanded = bpy.context.object, 'Original row', True
     empty_plan = SimpleNamespace(objects=[])
-    with patch.object(simplebake_adapter, 'availability', return_value=('FakeSimpleBake', (2, 9, 11))):
+    # SimpleBake settings are saved/restored by the adapter with SimpleBake's own
+    # preset mechanism (covered by the real SimpleBake end-to-end run); the
+    # scene state snapshot must never read or write them.
+    with patch.object(simplebake_adapter, 'availability', return_value=('FakeSimpleBake', (2, 9, 11))), \
+            patch.object(simplebake_adapter, 'bake_properties', side_effect=AssertionError('Unexpected SimpleBake read')):
+        before_sb = fake_simplebake_values(fake_sb)
         simplebake_updates.clear()
-        with patch.object(export_state, 'bake_properties', side_effect=AssertionError('Unexpected SimpleBake read')):
-            default_snapshot = snapshot_state(empty_plan)
-            assert default_snapshot.simplebake is None
-            restore_state(default_snapshot)
-        assert simplebake_updates == []
-        phase2_snapshot = snapshot_state(empty_plan, include_simplebake=True)
-        assert set(phase2_snapshot.simplebake_values) == {
-            'global_mode', 'tex_per_mat', 'selected_col', 'objects_list'}
-        row_pointer = fake_sb.objects_list[0].as_pointer()
-        restore_state(phase2_snapshot)
-        assert simplebake_updates == [], simplebake_updates
-        fake_sb.global_mode = 'CHANGED'
-        fake_sb.selected_col = False
-        fake_sb.objects_list[0].name = 'Changed row'
-        fake_sb.objects_list.add()
-        fake_sb.bgbake = False  # unrelated setting must not be restored
-        simplebake_updates.clear()
-        restore_state(phase2_snapshot)
-        assert len(simplebake_updates) == 3, simplebake_updates
-        assert fake_sb.global_mode == 'USER_MODE' and fake_sb.selected_col is True
-        assert fake_sb.bgbake is False
-        assert len(fake_sb.objects_list) == 1
-        assert fake_sb.objects_list[0].name == 'Original row'
-        assert fake_sb.objects_list[0].as_pointer() == row_pointer
-        # Exercise list growth as well; only fields differing from new defaults
-        # should be assigned when recreating a removed bake-list entry.
-        fake_sb.objects_list.remove(0)
-        simplebake_updates.clear()
-        restore_state(phase2_snapshot)
-        assert len(simplebake_updates) == 3, simplebake_updates
-        assert fake_sb.objects_list[0].obj_point == phase2_snapshot.simplebake_values['objects_list'][0]['obj_point']
-        assert fake_sb.objects_list[0].name == 'Original row' and fake_sb.objects_list[0].expanded is True
-        simplebake_updates.clear()
-        restore_state(phase2_snapshot)
-        assert simplebake_updates == [], simplebake_updates
-    print('PASS babylon_simplebake_explicit_snapshot_restore')
+        snapshot = snapshot_state(empty_plan)
+        assert not hasattr(snapshot, 'simplebake')
+        restore_state(snapshot)
+        assert simplebake_updates == [] and fake_simplebake_values(fake_sb) == before_sb
+    print('PASS babylon_state_never_touches_simplebake')
 
     round3_fixture()
 
@@ -510,7 +498,7 @@ try:
             return real_export(props)
 
         with patch.object(simplebake_adapter, 'availability', return_value=('FakeSimpleBake', (2, 9, 11))), \
-                patch.object(export_state, 'bake_properties', side_effect=AssertionError('Export read SimpleBake')), \
+                patch.object(simplebake_adapter, 'bake_properties', side_effect=AssertionError('Export read SimpleBake')), \
                 patch.object(exporting, '_export_gltf', inspect_external_parent):
             path = exporting.export_collection(collection, settings)
         assert simplebake_updates == [], simplebake_updates

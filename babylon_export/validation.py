@@ -1,11 +1,14 @@
 """Read-only preflight. Bake-only dependencies never block existing bake export."""
+from array import array
 from collections import Counter
 import bpy
 from .core import Issue, safe_batch_name
 from .materials import find_baked_material
 from .plan import (build_bake_plan, has_saved_variant_data, read_mesh_variants,
                    read_scene_variants, variants_ui_enabled)
-from .simplebake_adapter import availability, bake_properties
+from .core import bake_batch_name
+from .simplebake_adapter import (WORKING_PREFIXES, addon_preferences as simplebake_preferences, availability,
+                                 bake_properties, expected_channels, has_preset, unused_channel_labels)
 from .exporters import selected_exporter, exporter_filepath, MISSING_EXPORT_PATH
 from .selection import has_image_texture
 
@@ -44,6 +47,47 @@ def has_principled(material):
                if node.type == 'OUTPUT_MATERIAL' and node.is_active_output)
 
 
+def uv_outside_unit_square(mesh, uv_name):
+    """True if any coordinate of the UV map lies outside 0-1 (UDIM-like)."""
+    layer = mesh.uv_layers.get(uv_name)
+    if layer is None or not len(layer.data):
+        return False
+    coords = array('f', [0.0]) * (len(layer.data) * 2)
+    layer.data.foreach_get('uv', coords)
+    return min(coords) < -1e-4 or max(coords) > 1.0 + 1e-4
+
+
+def _check_bake_inputs(collection, settings, plan, add):
+    """Bake-only checks that protect the user's data and the bake result."""
+    baked_objects = sorted(plan.baked_objects, key=lambda o: o.name)
+    for obj in baked_objects:
+        names = {slot.material.name for slot in obj.material_slots if slot.material}
+        names |= {mat.name for (o, _slot), mat in plan.defaults.items() if o == obj and mat}
+        for variant in plan.variants.values():
+            names |= {mat.name for (o, _slot), mat in variant.items() if o == obj and mat}
+        for name in sorted(names):
+            if name.startswith(WORKING_PREFIXES):
+                add('ERROR', f'Material "{name}" starts with {"/".join(WORKING_PREFIXES)}, which SimpleBake '
+                             'reserves for its working copies; rename it before baking.', obj)
+        if settings.bake_uv_name in obj.data.uv_layers and uv_outside_unit_square(obj.data, settings.bake_uv_name):
+            add('WARNING', f'UV map "{settings.bake_uv_name}" of object "{obj.name}" leaves the 0-1 square; '
+                           'textures repeat there.', obj)
+    users = Counter(obj.data for obj in baked_objects)
+    for mesh, count in users.items():
+        if count > 1:
+            add('WARNING', f'{count} baked objects share mesh "{mesh.name}"; variant materials on mesh slots '
+                           'affect all of them during the bake.')
+    # SimpleBake deletes an existing image of the same name before baking.
+    # Images from earlier runs of this collection carry our tag and may be
+    # replaced; any other image with this collection's batch name is protected.
+    batch = bake_batch_name(collection.name)
+    foreign = sorted(img.name for img in bpy.data.images
+                     if batch in img.name and img.get('bbe_owner') != collection.name)
+    if foreign:
+        add('ERROR', f'{len(foreign)} existing image(s) use the bake name "{batch}" but were not made by this '
+                     f'tool (e.g. "{foreign[0]}"); rename them so SimpleBake does not replace them.')
+
+
 def validate(collection, *, for_export=False, settings=None):
     settings = settings or collection.lcw_babylon_export
     issues = []
@@ -78,13 +122,31 @@ def validate(collection, *, for_export=False, settings=None):
             if version[:2] != (2, 9):
                 add('ERROR', f'Unsupported SimpleBake version {version}; 2.9.x is expected.')
             sbp = bake_properties(bpy.context.scene)
-            presets = getattr(sbp, 'local_presets_list', ())
-            if settings.simplebake_preset and settings.simplebake_preset not in {p.name for p in presets}:
+            if settings.simplebake_preset and not has_preset(sbp, settings.simplebake_preset):
                 add('ERROR', 'The selected SimpleBake preset does not exist.')
+            sb_prefs = simplebake_preferences()
+            if sb_prefs is not None and getattr(sb_prefs, 'disable_other_addons2', False):
+                add('ERROR', 'Turn off "Disable other add-ons" in the SimpleBake preferences; '
+                             'it would disable LC Workflow during the bake.')
+            name_format = getattr(sb_prefs, 'img_name_format', '') if sb_prefs is not None else ''
+            if name_format and not all(token in name_format for token in ('%OBJ%', '%BATCH%')):
+                add('ERROR', 'The SimpleBake image name format must contain %OBJ% and %BATCH%; '
+                             'otherwise bakes of different objects or files overwrite each other.')
+            if sbp is not None and getattr(sbp, 'fake_background', False):
+                add('ERROR', 'Turn off SimpleBake "fake background"; it applies bakes and saves the file.')
+            if sbp is not None and not settings.simplebake_preset:
+                # With a preset, channels come from the preset when the bake starts.
+                if not expected_channels(sbp):
+                    add('ERROR', 'Select at least one SimpleBake channel glTF can use '
+                                 '(Diffuse, Metalness, Roughness, Normal, Alpha, Emission or AO).')
+                unused = unused_channel_labels(sbp)
+                if unused:
+                    add('WARNING', 'SimpleBake will also bake channels glTF does not use: '
+                                   + ', '.join(unused) + '.')
         if not bpy.data.filepath:
             add('ERROR', 'Save the Blender file before baking.')
-        if settings.bake_uv_name != 'SimpleBake':
-            add('WARNING', 'SimpleBake looks for a UV map named SimpleBake; another name needs adapter support.')
+        elif bpy.data.is_dirty:
+            add('WARNING', 'The file has unsaved changes; save it before baking so you can return to this state.')
         if not settings.texture_dir:
             add('ERROR', 'The texture folder is not set.')
     if not variants_ui_enabled() and has_saved_variant_data(collection, include_scene=settings.export_variants):
@@ -97,6 +159,8 @@ def validate(collection, *, for_export=False, settings=None):
     baked_objects = plan.baked_objects
     if not plan.objects:
         add('ERROR', 'The collection contains no mesh object.')
+    elif not for_export and not plan.passes:
+        add('ERROR', 'No material is selected for baking; tick Bake in the material list.')
     mesh_variants = {o: read_mesh_variants(o.data) for o in plan.objects}
     has_variant_data = any(defaults or mappings for defaults, mappings in mesh_variants.values())
     if (has_variant_data or plan.variant_ids) and not variants_ui_enabled():
@@ -146,6 +210,8 @@ def validate(collection, *, for_export=False, settings=None):
             add('ERROR', f'Material "{mat.name}" has no Principled BSDF connected to the output.', mat=mat)
         if not for_export and safe_batch_name(mat.name) != mat.name:
             add('ERROR', f'Material name "{mat.name}" contains characters not allowed in file names.', mat=mat)
+    if not for_export:
+        _check_bake_inputs(collection, settings, plan, add)
     unbaked_pairs = plan.all_material_pairs() - pairs
     for mat in sorted({mat for _obj, mat in unbaked_pairs}, key=lambda mat: mat.name):
         if not has_principled(mat):

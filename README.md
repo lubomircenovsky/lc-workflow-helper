@@ -102,6 +102,10 @@ Simplifies triangulated CAD exports (mainly sheet-metal machine cladding) into l
 
 Details, guarantees and limits: `docs/cad-mesh-reconstruction.md`.
 
+## Babylon Bake & Export
+
+Under **Project specific tools**: bakes a collection's materials with the optional SimpleBake add-on (default state and every glTF material variant), builds glTF-ready `*_baked` materials and exports the collection as a GLB through its glTF Collection Exporter, with one UV map, no Draco and all variants. Unticked materials export unchanged. The user's materials, UVs, face assignments and SimpleBake settings are always restored. Workflow and safety checks: `docs/babylon-bake-export.md`.
+
 ## Validation Status
 
 Automated validation completed:
