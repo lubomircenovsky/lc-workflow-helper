@@ -159,6 +159,7 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
     export_after: bpy.props.BoolProperty(name='Export After Bake', default=False, options={'SKIP_SAVE'})
 
     _timer = None
+    _shown_text = ''
 
     @classmethod
     def poll(cls, context):
@@ -202,11 +203,16 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
             status = job.step()
         except Exception as exc:  # noqa: BLE001 - step() handles its own errors; this is a last resort
             status = job.finish(FAILED, f'Bake failed: {exc}')
-        _redraw(context)
         if status == RUNNING:
-            # No scene writes while running: a property write tags the scene
-            # in the depsgraph and raced with Blender's bake thread (crash).
-            # The panel draws job.progress_text() instead.
+            # No scene writes and no forced viewport redraws while Blender's
+            # bake thread may run: a property write tags the scene in the
+            # depsgraph and a redraw evaluates it (crashes in repeated real
+            # runs). The panel draws job.progress_text(); it is redrawn only
+            # when that text changes, i.e. between passes.
+            text = job.progress_text()
+            if text != self._shown_text and not job.adapter.bake_job_running():
+                self._shown_text = text
+                _redraw(context)
             return {'PASS_THROUGH'}
         set_active_job(None)
         state = (job.scene if job.scene_valid() else context.scene).lcw_babylon_export
