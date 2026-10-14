@@ -22,7 +22,7 @@ if (-not $IdMatch.Success -or -not $VersionMatch.Success) {
 
 $ExtensionId = $IdMatch.Groups[1].Value
 $Version = $VersionMatch.Groups[1].Value
-$ResolvedOutputDir = Join-Path $RepoRoot $OutputDir
+$ResolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) { $OutputDir } else { Join-Path $RepoRoot $OutputDir }
 
 New-Item -ItemType Directory -Force -Path $ResolvedOutputDir | Out-Null
 
@@ -52,12 +52,22 @@ $IncludePaths = @(
     "quad_reconstruction",
     "cad_mesh_tool",
     "cad_reconstruction",
+    "babylon_export",
     "gn_library",
     "docs",
     "operators",
     "ui",
     "utils"
 )
+
+# Every top-level Python package must be listed above; a missing one builds a
+# ZIP whose __init__.py imports a package that is not there.
+$MissingPackages = Get-ChildItem -Path $RepoRoot -Directory |
+    Where-Object { (Test-Path (Join-Path $_.FullName "__init__.py")) -and ($IncludePaths -notcontains $_.Name) -and ($_.Name -ne "tests") } |
+    ForEach-Object { $_.Name }
+if ($MissingPackages) {
+    throw "Fallback build is missing top-level packages: $($MissingPackages -join ', '). Add them to `$IncludePaths."
+}
 
 foreach ($RelativePath in $IncludePaths) {
     $Source = Join-Path $RepoRoot $RelativePath
