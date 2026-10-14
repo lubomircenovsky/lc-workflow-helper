@@ -100,10 +100,15 @@ def _check_bake_inputs(collection, settings, plan, add):
     if folder and os.path.isdir(folder):
         ours = {os.path.normcase(os.path.normpath(bpy.path.abspath(img.filepath)))
                 for img in bpy.data.images if 'bbe_owner' in img and img.filepath}
-        # SimpleBake may write into per-object or per-material subfolders.
-        existing = sorted(os.path.relpath(os.path.join(base, name), folder)
-                          for base, _dirs, files in os.walk(folder) for name in files if batch in name
-                          and os.path.normcase(os.path.normpath(os.path.join(base, name))) not in ours)
+        # SimpleBake may write into per-object and per-material subfolders
+        # (two levels); deeper trees are not scanned, to keep Check fast.
+        existing = []
+        for base, dirs, files in os.walk(folder):
+            if os.path.relpath(base, folder).count(os.sep) >= 1 and base != folder:
+                dirs[:] = []
+            existing += [os.path.relpath(os.path.join(base, name), folder) for name in files if batch in name
+                         and os.path.normcase(os.path.normpath(os.path.join(base, name))) not in ours]
+        existing.sort()
         if existing:
             add('WARNING', f'{len(existing)} file(s) in the texture folder already use the bake name "{batch}" '
                            f'(e.g. "{existing[0]}"); the bake overwrites files with the same name.')

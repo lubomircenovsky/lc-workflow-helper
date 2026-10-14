@@ -202,16 +202,15 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
             status = job.step()
         except Exception as exc:  # noqa: BLE001 - step() handles its own errors; this is a last resort
             status = job.finish(FAILED, f'Bake failed: {exc}')
-        state = (job.scene if job.scene_valid() else context.scene).lcw_babylon_export
-        text = job.progress_text()
-        # Write only on change: writing a property tags the scene in the
-        # depsgraph, which must not race with Blender's bake thread.
-        if state.last_report != text:
-            state.last_report = text
         _redraw(context)
         if status == RUNNING:
+            # No scene writes while running: a property write tags the scene
+            # in the depsgraph and raced with Blender's bake thread (crash).
+            # The panel draws job.progress_text() instead.
             return {'PASS_THROUGH'}
         set_active_job(None)
+        state = (job.scene if job.scene_valid() else context.scene).lcw_babylon_export
+        state.last_report = job.message
         if status == FINISHED and self.export_after:
             ok, message = run_export(self._collection, state)
             state.last_report = f'{job.message} {message}'

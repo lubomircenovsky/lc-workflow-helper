@@ -69,7 +69,10 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         row.operator('lcw.babylon_export', text='Export', icon='EXPORT')
         row.operator('lcw.babylon_cleanup', text='Clean Up', icon='TRASH')
         box = layout.box()
-        for line in wrap(state.last_report[:400], width=48):
+        # While baking, progress comes from Python state: writing it into the
+        # scene would tag the depsgraph while Blender's bake thread runs.
+        report = job.progress_text() if job is not None else state.last_report
+        for line in wrap(report[:400], width=48):
             box.label(text=line)
         # Bound cached-report work; no scanning of objects or material graphs.
         for index in range(min(len(state.issues), 6)):
