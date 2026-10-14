@@ -485,7 +485,6 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
         state = wm_state(context)
         file_state = scene_state(context)
 
-        layout.label(text="Workflow tools for LC production scenes.")
         section = _draw_collapsible_section(layout, state, "root_category_order_open", "Main Category Order", icon="SORTSIZE")
         if section:
             section.label(text="Use arrows to reorder categories in this .blend file.", icon="INFO")
