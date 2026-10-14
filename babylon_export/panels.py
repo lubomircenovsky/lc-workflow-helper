@@ -27,7 +27,9 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         state = context.scene.lcw_babylon_export
         layout.prop(state, 'target_collection', text='Kolekce')
         collection = target_collection(context)
-        layout.label(text=f'Cíl: {collection.name}')
+        if state.target_collection is None:
+            # Only the fallback needs spelling out; a picked collection is already shown.
+            layout.label(text=f'Aktivní kolekce: {collection.name}', icon='OUTLINER_COLLECTION')
         settings = collection.lcw_babylon_export
         for name in ('simplebake_preset', 'bake_uv_name', 'texture_dir', 'baked_suffix',
                      'exporter_name', 'export_variants'):
@@ -40,13 +42,10 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         layout.template_list('LCW_UL_babylon_materials', '', settings, 'material_selections',
                              settings, 'material_index', rows=5)
         row = layout.row(align=True)
-        row.operator('lcw.babylon_check', text='Kontrola')
-        row.operator('lcw.babylon_export', text='Exportovat')
-        row.operator('lcw.babylon_cleanup', text='Uklidit')
-        row = layout.row(align=True)
-        row.enabled = False
-        row.operator('lcw.babylon_bake_phase2', text='Zapéct')
-        row.operator('lcw.babylon_bake_phase2', text='Zapéct a exportovat')
+        row.operator('lcw.babylon_check', text='Kontrola', icon='VIEWZOOM')
+        row.operator('lcw.babylon_export', text='Exportovat', icon='EXPORT')
+        row.operator('lcw.babylon_cleanup', text='Uklidit', icon='TRASH')
+        # Baking buttons appear with phase 2; until then one note instead of dead buttons.
         layout.label(text='Pečení přes SimpleBake – fáze 2', icon='INFO')
         box = layout.box()
         for line in wrap(state.last_report[:180], width=48):
@@ -54,7 +53,10 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         # Bound cached-report work; no scanning of objects or material graphs.
         for index in range(min(len(state.issues), 6)):
             item = state.issues[index]
+            line_row = box.row()
+            line_row.alert = item.level == 'ERROR'
+            column = line_row.column(align=True)
             for line in wrap(item.text[:180], width=48):
-                box.label(text=line, icon='ERROR' if item.level == 'ERROR' else 'INFO')
+                column.label(text=line, icon='ERROR' if item.level == 'ERROR' else 'INFO')
         if len(state.issues) > 6:
             box.label(text=f'Dalších {len(state.issues) - 6} problémů.')
