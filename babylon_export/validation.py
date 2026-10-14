@@ -2,7 +2,6 @@
 from array import array
 from collections import Counter
 import os
-import re
 import bpy
 from .core import Issue, safe_batch_name
 from .materials import find_baked_material
@@ -90,18 +89,21 @@ def _check_bake_inputs(collection, settings, plan, add):
     # Images made by this tool carry the bbe_owner tag and may be replaced;
     # any other image with this collection's batch name is protected.
     batch = bake_batch_name(collection.name)
-    batch_pattern = re.compile(re.escape(batch) + r'(?![A-Za-z0-9])')
+    # Plain substring on purpose: the name format may put any token right
+    # after %BATCH%. A false alarm only asks for a rename; a miss loses data.
     foreign = sorted(img.name for img in bpy.data.images
-                     if 'bbe_owner' not in img and batch_pattern.search(img.name))
+                     if batch in img.name and img.get('bbe_owner') != collection.name)
     if foreign:
-        add('ERROR', f'{len(foreign)} existing image(s) use the bake name "{batch}" but were not made by this '
-                     f'tool (e.g. "{foreign[0]}"); rename them so SimpleBake does not replace them.')
+        add('ERROR', f'{len(foreign)} existing image(s) use the bake name "{batch}" but were not made for this '
+                     f'collection (e.g. "{foreign[0]}"); rename them so SimpleBake does not replace them.')
     folder = bpy.path.abspath(settings.texture_dir) if settings.texture_dir else ''
     if folder and os.path.isdir(folder):
         ours = {os.path.normcase(os.path.normpath(bpy.path.abspath(img.filepath)))
                 for img in bpy.data.images if 'bbe_owner' in img and img.filepath}
-        existing = sorted(name for name in os.listdir(folder) if batch_pattern.search(name)
-                          and os.path.normcase(os.path.normpath(os.path.join(folder, name))) not in ours)
+        # SimpleBake may write into per-object or per-material subfolders.
+        existing = sorted(os.path.relpath(os.path.join(base, name), folder)
+                          for base, _dirs, files in os.walk(folder) for name in files if batch in name
+                          and os.path.normcase(os.path.normpath(os.path.join(base, name))) not in ours)
         if existing:
             add('WARNING', f'{len(existing)} file(s) in the texture folder already use the bake name "{batch}" '
                            f'(e.g. "{existing[0]}"); the bake overwrites files with the same name.')
@@ -119,11 +121,13 @@ def _check_reserved_names(add):
             add('ERROR', f'Collection "{collection.name}" contains "{RESERVED_COLLECTION_TEXT}"; SimpleBake '
                          'deletes such collections. Rename it, or remove it if a crashed bake left it behind.')
     for name in RESERVED_MATERIALS:
-        if (material := bpy.data.materials.get(name)) is not None and material.users:
-            add('WARNING', f'Material "{name}" is used; SimpleBake deletes it after the bake.')
+        if bpy.data.materials.get(name) is not None:
+            add('ERROR', f'Material "{name}" has a name SimpleBake reserves and deletes after the bake; '
+                         'rename it, or delete it if a crashed bake left it behind.')
     for name in RESERVED_IMAGES:
-        if (image := bpy.data.images.get(name)) is not None and image.users:
-            add('WARNING', f'Image "{name}" is used; SimpleBake deletes it after the bake.')
+        if bpy.data.images.get(name) is not None:
+            add('ERROR', f'Image "{name}" has a name SimpleBake reserves and deletes after the bake; '
+                         'rename it, or delete it if a crashed bake left it behind.')
 
 
 def validate(collection, *, for_export=False, settings=None):

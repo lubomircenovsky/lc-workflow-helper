@@ -57,10 +57,10 @@ Check blocks the bake when:
 - SimpleBake's *Disable other add-ons* preference is on (it would disable LC Workflow),
 - the SimpleBake image name format lacks `%OBJ%`, `%BATCH%` or `%BAKETYPE%` (bakes would overwrite each other),
 - the bake name `LCW_<collection>` is longer than SimpleBake's batch name limit,
-- a scene is called `compositor_aa` or `compositor_denoise`, or a collection whose name contains `SimpleBake_Working` holds objects – SimpleBake deletes these,
+- a scene is called `compositor_aa` or `compositor_denoise`, a collection whose name contains `SimpleBake_Working` holds objects, or a material `SimpleBake_Placeholder` or image `SB_excluded_mat_dummy` exists – SimpleBake deletes these,
 - SimpleBake *fake background* is on,
 - a material on a baked object starts with `SBW_` or `SBM_` (reserved by SimpleBake),
-- an existing image uses this collection's bake name (`LCW_<collection>`) but was not made by this tool – SimpleBake would replace it,
+- an existing image uses this collection's bake name (`LCW_<collection>`) but was not made for this collection – SimpleBake would replace it,
 - a baked object has no bake UV, or no material is ticked.
 
 It warns about unsaved changes, bake UVs outside the 0–1 square, baked objects sharing one mesh, Geometry Nodes on baked objects, files in the texture folder that the bake will overwrite and channels glTF does not use.

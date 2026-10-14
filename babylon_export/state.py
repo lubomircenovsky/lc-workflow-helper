@@ -151,6 +151,10 @@ def _restore_selection(state):
 
 
 def _restore_mode(state):
+    # Entering Edit Mode in a view layer the window does not show crashes
+    # Blender 5.2 (BKE_base_eval_flags); the object then stays in Object Mode.
+    if bpy.context.view_layer != state.view_layer:
+        return
     if state.active and state.mode != 'OBJECT':
         with bpy.context.temp_override(view_layer=state.view_layer, active_object=state.active,
                                        object=state.active):

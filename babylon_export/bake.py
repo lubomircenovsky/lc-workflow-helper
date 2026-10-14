@@ -197,7 +197,7 @@ class BakeJob:
                 # Never restore originals while SimpleBake still works on them.
                 if self.adapter.is_baking() and not self._stalled():
                     return RUNNING
-                return self.finish(*self.pending)
+                return self.finish(*self._recover_if_stuck(*self.pending))
             if self.phase == 'next':
                 if self.cancel_requested:
                     return self.finish(CANCELLED, 'Bake cancelled; completed passes were kept.')
@@ -231,8 +231,19 @@ class BakeJob:
                 self.pending, self.phase = (FAILED, message), 'draining'
                 self.message = message + ' Waiting for SimpleBake to stop...'
                 return RUNNING
-            return self.finish(FAILED, message)
+            return self.finish(*self._recover_if_stuck(FAILED, message))
         return RUNNING
+
+    def _recover_if_stuck(self, status, message):
+        """Undo SimpleBake's preparation if it still claims to bake (stalled)."""
+        if not self.adapter_is_baking():
+            return status, message
+        try:
+            problems = self.adapter.recover_after_stall(self.scene)
+        except Exception as exc:  # noqa: BLE001
+            problems = [str(exc)]
+        detail = f' Not undone: {"; ".join(problems)}.' if problems else ''
+        return status, f'{message} SimpleBake had stopped without finishing.{detail}'
 
     def finish(self, status, message):
         """Restore originals exactly once, whatever happened."""

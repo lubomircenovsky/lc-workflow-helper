@@ -300,14 +300,21 @@ try:
         assert any('Bump' in i.text for i in issues if i.level == 'WARNING')
         foreign = bpy.data.images.new('door_LCW_V2_Export_PBR_Diffuse_Wood_A', 4, 4)
         patch_validation(make_sbp())
-        assert any('were not made by this tool' in i.text for i in validation_module.validate(collection)
+        assert any('were not made for this' in i.text for i in validation_module.validate(collection)
                    if i.level == 'ERROR')
         foreign['bbe_owner'] = 'V2_Export'  # an image from an earlier run of this collection may be replaced
-        assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
+        assert not any('were not made for this' in i.text for i in validation_module.validate(collection))
         bpy.data.images.remove(foreign)
-        other = bpy.data.images.new('door_LCW_V2_Export2_PBR_Diffuse', 4, 4)  # another collection's batch
-        assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
+        # Another collection's output with a name SimpleBake could reuse is protected too.
+        other = bpy.data.images.new('door_LCW_V2_ExportDiffuse', 4, 4)  # format "%OBJ%_%BATCH%%BAKETYPE%"
+        other['bbe_owner'] = 'V2_Export_Other'
+        assert any('were not made for this' in i.text for i in validation_module.validate(collection)
+                   if i.level == 'ERROR')
         bpy.data.images.remove(other)
+        placeholder = bpy.data.materials.new('SimpleBake_Placeholder')
+        assert any('SimpleBake_Placeholder' in i.text for i in validation_module.validate(collection)
+                   if i.level == 'ERROR')
+        bpy.data.materials.remove(placeholder)
         reserved = bpy.data.scenes.new('compositor_aa')
         assert any('compositor_aa' in i.text for i in validation_module.validate(collection) if i.level == 'ERROR')
         bpy.data.scenes.remove(reserved)
@@ -394,7 +401,7 @@ try:
         assert_restored(door, before, sbp, sb_before, adapter)
         made = [i for i in bpy.data.images if i.get('SB_bake_operation_id') in job.operation_ids]
         assert made and all(i.get('bbe_owner') == 'V2_Export' for i in made), 'failed pass output is ours'
-        assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
+        assert not any('were not made for this' in i.text for i in validation_module.validate(collection))
         print('PASS babylon_bake_missing_channel_fails')
 
         # --- cancel after the first pass
@@ -496,6 +503,20 @@ try:
         assert run(job) == FINISHED, job.message
         assert door.mode == 'EDIT', door.mode
         bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.data.scenes.remove(other_scene)
+        assert_restored(door, before, sbp, sb_before, adapter)
+        # Cancelled while another scene is shown: no Edit Mode in a hidden
+        # view layer (crashes Blender); everything else is restored.
+        bpy.ops.object.mode_set(mode='EDIT')
+        job, adapter, sbp = new_job(collection)
+        sb_before = sb_values(sbp)
+        job.start()
+        other_scene = bpy.data.scenes.new('Other scene')
+        assert job.step() == RUNNING
+        job.request_cancel()
+        with bpy.context.temp_override(scene=other_scene):
+            assert run(job) == CANCELLED, job.message
+        assert door.mode == 'OBJECT'
         bpy.data.scenes.remove(other_scene)
         assert_restored(door, before, sbp, sb_before, adapter)
         print('PASS babylon_bake_edit_mode_and_scene_guard')
