@@ -107,6 +107,11 @@ class FakeAdapter:
         sbp.objects_list[:] = objects
         sbp.mat_bake_list[:] = materials
         self.restored_settings = True
+        # Real SimpleBake: loading a preset re-applies its stale UV list and
+        # changes active UVs; the job must put them back afterwards.
+        door = bpy.data.objects.get('door')
+        if door is not None and 'SimpleBake' in door.data.uv_layers:
+            door.data.uv_layers.active = door.data.uv_layers['SimpleBake']
 
     def suspend_preferences(self):
         previous = {name: value for name, value in self.prefs.items() if value}
@@ -126,8 +131,9 @@ class FakeAdapter:
     def bake_job_running(self):
         return self.bake_running
 
-    def clear_stuck_bake(self):
+    def recover_after_stall(self, scene):
         self.stuck_cleared = True
+        return []
 
     def start_bake(self, operation_id):
         number = len(self.starts) + 1
@@ -279,7 +285,12 @@ try:
         patch_validation(sbp, SimpleNamespace(disable_other_addons2=True, img_name_format='%BAKETYPE%'))
         errors = [i.text for i in validation_module.validate(collection) if i.level == 'ERROR']
         assert any('Disable other add-ons' in t for t in errors), errors
-        assert any('%OBJ% and %BATCH%' in t for t in errors), errors
+        assert any('%OBJ%, %BATCH% and %BAKETYPE%' in t for t in errors), errors
+        patch_validation(sbp, SimpleNamespace(disable_other_addons2=False, img_name_format='%OBJ%_%BATCH%',
+                                              batch_name_max_length=8))
+        errors = [i.text for i in validation_module.validate(collection) if i.level == 'ERROR']
+        assert any('%BAKETYPE%' in t for t in errors), 'Diffuse and Roughness would get one name'
+        assert any('longer than SimpleBake allows' in t for t in errors), errors
         sbp.selected_col = sbp.selected_rough = sbp.selected_normal = False
         sbp.selected_bump, sbp.fake_background = True, True
         patch_validation(sbp)
@@ -294,6 +305,17 @@ try:
         foreign['bbe_owner'] = 'V2_Export'  # an image from an earlier run of this collection may be replaced
         assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
         bpy.data.images.remove(foreign)
+        other = bpy.data.images.new('door_LCW_V2_Export2_PBR_Diffuse', 4, 4)  # another collection's batch
+        assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
+        bpy.data.images.remove(other)
+        reserved = bpy.data.scenes.new('compositor_aa')
+        assert any('compositor_aa' in i.text for i in validation_module.validate(collection) if i.level == 'ERROR')
+        bpy.data.scenes.remove(reserved)
+        working = bpy.data.collections.new('My SimpleBake_Working set')
+        working.objects.link(glass)
+        assert any('SimpleBake_Working' in i.text for i in validation_module.validate(collection)
+                   if i.level == 'ERROR')
+        bpy.data.collections.remove(working)
         mats['Rubber'].name = 'SBW_Rubber'
         assert any('SBW_' in i.text for i in validation_module.validate(collection) if i.level == 'ERROR')
         mats['Rubber'].name = 'Rubber'
@@ -363,6 +385,9 @@ try:
         job.start()
         assert run(job) == FAILED and 'roughness' in job.message, job.message
         assert_restored(door, before, sbp, sb_before, adapter)
+        made = [i for i in bpy.data.images if i.get('SB_bake_operation_id') in job.operation_ids]
+        assert made and all(i.get('bbe_owner') == 'V2_Export' for i in made), 'failed pass output is ours'
+        assert not any('were not made by this tool' in i.text for i in validation_module.validate(collection))
         print('PASS babylon_bake_missing_channel_fails')
 
         # --- cancel after the first pass
@@ -406,18 +431,65 @@ try:
         assert job.step() == RUNNING  # still baking
         adapter.baking_ticks = 0
         bake_module.set_active_job(job)
-        bake_module.abandon_active_job(restore_data=True)
+        assert bake_module.abandon_active_job(restore_data=True) is None
         assert bake_module.active_job() is None and job.result == CANCELLED
         assert_restored(door, before, sbp, sb_before, adapter)
+        # Unregister while SimpleBake still bakes: nothing restored until it stops
+        # (its finishing step must not run with purge/save preferences back on).
+        job, adapter, sbp = new_job(collection)
+        sb_before = sb_values(sbp)
+        job.start()
+        assert job.step() == RUNNING
+        adapter.baking_ticks = 5
+        bake_module.set_active_job(job)
+        finish_later = bake_module.abandon_active_job(restore_data=True)
+        try:
+            assert finish_later is not None and job.result is None
+            assert not any(adapter.prefs.values()), 'preferences stay suspended while SimpleBake bakes'
+            assert slot_names(door)[:2] == ['Wood_A', 'Wood_A']
+            for _ in range(10):
+                if finish_later() is None:
+                    break
+            assert job.result == CANCELLED, job.message
+            assert_restored(door, before, sbp, sb_before, adapter)
+        finally:
+            if bpy.app.timers.is_registered(finish_later):
+                bpy.app.timers.unregister(finish_later)
+        # File load while SimpleBake bakes: preferences only, once it stops.
         job, adapter, sbp = new_job(collection)
         job.start()
         job.step()
-        job.step()  # pass 2: variant material Wood_B assigned
+        job.step()  # pass 1 still baking
         bake_module.set_active_job(job)
-        bake_module.abandon_active_job(restore_data=False)
-        assert adapter.prefs['saveonbake'] and adapter.prefs['purge_after_bake']
+        finish_later = bake_module.abandon_active_job(restore_data=False)
+        try:
+            assert not adapter.prefs['purge_after_bake']
+            while finish_later() is not None:
+                pass
+            assert adapter.prefs['saveonbake'] and adapter.prefs['purge_after_bake']
+        finally:
+            if bpy.app.timers.is_registered(finish_later):
+                bpy.app.timers.unregister(finish_later)
+        job.result = None
         job.finish(CANCELLED, 'test cleanup')  # emulate nothing left behind for later checks
         print('PASS babylon_bake_abandon_on_unregister_and_load')
+
+        # --- started in Edit Mode: mode restored; other scene shown: wait
+        bpy.context.view_layer.objects.active = door
+        bpy.ops.object.mode_set(mode='EDIT')
+        job, adapter, sbp = new_job(collection)
+        sb_before = sb_values(sbp)
+        job.start()
+        other_scene = bpy.data.scenes.new('Other scene')
+        with bpy.context.temp_override(scene=other_scene):
+            assert job.step() == RUNNING and 'switch back to scene' in job.progress_text()
+            assert not adapter.starts, 'no pass may start in another scene'
+        assert run(job) == FINISHED, job.message
+        assert door.mode == 'EDIT', door.mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+        bpy.data.scenes.remove(other_scene)
+        assert_restored(door, before, sbp, sb_before, adapter)
+        print('PASS babylon_bake_edit_mode_and_scene_guard')
 
         # --- nothing selected
         for item in collection.lcw_babylon_export.material_selections:

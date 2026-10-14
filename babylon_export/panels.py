@@ -56,7 +56,7 @@ class LCW_PT_babylon_export(bpy.types.Panel):
             warning = box.column(align=True)
             warning.alert = True
             warning.label(text='Do not edit or save the file', icon='ERROR')
-            warning.label(text='until the bake finishes.')
+            warning.label(text='or press Esc until the bake finishes.')
             box.operator('lcw.babylon_bake_cancel', text='Cancel After This Pass', icon='CANCEL')
         else:
             row = layout.row(align=True)

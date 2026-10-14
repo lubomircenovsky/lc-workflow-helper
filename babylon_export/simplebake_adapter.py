@@ -21,12 +21,15 @@ Facts this adapter relies on (SimpleBake 2.9.11 source):
 """
 from contextlib import contextmanager
 import sys
+import uuid
 
 import addon_utils
 import bpy
 
 SUPPORTED_VERSION = (2, 9)
-RESTORE_PRESET = 'LCW_BBE_restore'
+# Each job saves its snapshot under a unique local preset name, so an existing
+# preset of the user is never overwritten or deleted.
+RESTORE_PRESET_PREFIX = 'LCW_BBE_restore_'
 
 # Settings the workflow depends on; written (with callbacks suppressed) before
 # each pass. Everything is restored from the RESTORE_PRESET snapshot afterwards.
@@ -95,6 +98,11 @@ UNUSED_SELECTIONS = {
     'selected_col_mats': 'Colour ID', 'selected_col_vertex': 'Vertex Colour',
 }
 WORKING_PREFIXES = ('SBW_', 'SBM_')  # SimpleBake strips these from material names
+# Datablocks SimpleBake creates and removes by name during every bake.
+RESERVED_COLLECTION_TEXT = 'SimpleBake_Working'  # any collection containing it is removed
+RESERVED_SCENES = ('compositor_aa', 'compositor_denoise')
+RESERVED_MATERIALS = ('SimpleBake_Placeholder',)
+RESERVED_IMAGES = ('SB_excluded_mat_dummy',)
 
 
 def availability():
@@ -166,16 +174,66 @@ def is_baking():
     return not bpy.ops.simplebake.bake_operation_pbr.poll()
 
 
-def clear_stuck_bake():
-    """Reset SimpleBake's flag after its macro aborted, so baking works again.
+def recover_after_stall(scene):
+    """Undo what SimpleBake's preparation left behind after its macro aborted.
 
     Only called once no Blender bake job has run for a long time while the
-    flag stayed set (see bake.BakeJob._stalled).
+    "baking" flag stayed set (see bake.BakeJob._stalled). Mirrors SimpleBake's
+    own finishing step for the parts that change the file or Blender: the
+    flag, depsgraph handlers of all add-ons, render engine, camera ray
+    visibility, the working collection and the Geometry Nodes proxy objects.
+    Slots, UVs and selection are restored by the job itself. Return a list of
+    parts that could not be restored.
     """
+    problems = []
     progress = _submodule('background_and_progress')
     holder = getattr(progress, 'BakeInProgress', None)
     if holder is not None:
         holder.is_baking = False
+    support = _submodule('bake_operators.common_bake_support')
+    prep = getattr(support, 'CommonBakePrepandFinish', None)
+
+    def attempt(label, action):
+        try:
+            action()
+        except Exception as exc:  # noqa: BLE001 - try every part
+            problems.append(f'{label}: {exc}')
+
+    def handlers():
+        current = bpy.app.handlers.depsgraph_update_post
+        for handler in list(getattr(prep, 'disabled_handlers', [])):
+            if handler not in current:
+                current.append(handler)
+        prep.disabled_handlers = []
+
+    def engine():
+        original = getattr(prep, 'orig_render_engine', None)
+        if original and scene.render.engine != original:
+            scene.render.engine = original
+
+    def camera():
+        for name, visible in getattr(prep, 'orig_camera_ray_visibility', {}).items():
+            if (obj := bpy.data.objects.get(name)) is not None and obj.visible_camera != visible:
+                obj.visible_camera = visible
+        prep.orig_camera_ray_visibility = {}
+
+    def working_collection():
+        # Created by SimpleBake for the run; removing it only unlinks objects.
+        if (collection := bpy.data.collections.get(RESERVED_COLLECTION_TEXT)) is not None:
+            bpy.data.collections.remove(collection)
+
+    def geometry_nodes():
+        if any('SB_replaced_orig_name' in obj for obj in scene.objects):
+            with _scene_context(scene):
+                bpy.ops.simplebake.reverse_geo_nodes_sidestep()
+
+    if prep is not None:
+        attempt('add-on handlers', handlers)
+        attempt('render engine', engine)
+        attempt('camera visibility', camera)
+    attempt('working collection', working_collection)
+    attempt('Geometry Nodes objects', geometry_nodes)
+    return problems
 
 
 def bake_job_running():
@@ -183,20 +241,82 @@ def bake_job_running():
     return bpy.app.is_job_running('OBJECT_BAKE')
 
 
+@contextmanager
+def _scene_context(scene):
+    """SimpleBake operators work on context.scene; bind them to ``scene``."""
+    if bpy.context.scene == scene:
+        yield
+        return
+    with bpy.context.temp_override(scene=scene):
+        yield
+
+
+def _scene_of(sbp):
+    return sbp.id_data
+
+
 def save_settings(sbp):
-    """Snapshot every SimpleBake setting with SimpleBake's own preset saver."""
-    bpy.ops.simplebake.local_preset_save_override(name_override=RESTORE_PRESET)
-    return RESTORE_PRESET if has_preset(sbp, RESTORE_PRESET) else None
+    """Snapshot every SimpleBake setting; return a token for restore_settings.
+
+    SimpleBake's own preset saver covers the panel settings and lists. Its
+    loader skips empty values (no channel packing, no target or cage object),
+    so those and every value this add-on writes are recorded separately.
+    """
+    scene = _scene_of(sbp)
+    name = RESTORE_PRESET_PREFIX + uuid.uuid4().hex[:12]
+    with _scene_context(scene):
+        bpy.ops.simplebake.local_preset_save_override(name_override=name)
+    if not has_preset(sbp, name):
+        return None
+    written = (*FORCED_SETTINGS, 'export_path', 'batch_name')
+    return {
+        'preset': name,
+        'values': {key: getattr(sbp, key) for key in written if hasattr(sbp, key)},
+        'cp_empty': len(sbp.cp_list) == 0,
+        # The loader merges into the list rebuilt from current slots and keeps
+        # flags this add-on wrote; the exact original list is put back.
+        'mat_bake_list': [(e.obj_name, e.mat_name, e.enabled) for e in sbp.mat_bake_list],
+        'targetobj': sbp.targetobj,
+        'targetobj_cycles': sbp.targetobj_cycles,
+        'cage_object': scene.render.bake.cage_object,
+    }
 
 
 def restore_settings(sbp, token):
-    """Load the snapshot (callbacks suppressed by SimpleBake) and remove it."""
-    if not token or not has_preset(sbp, token):
+    """Load the snapshot with callbacks suppressed, then remove it.
+
+    If loading fails, the snapshot preset is kept and named in the error, so
+    the user can load it in the SimpleBake panel.
+    """
+    if not token:
         return
+    name = token['preset']
+    scene = _scene_of(sbp)
+    if not has_preset(sbp, name):
+        raise RuntimeError(f'the saved SimpleBake settings "{name}" are missing')
     try:
-        bpy.ops.simplebake.local_preset_load_override(name_override=token)
-    finally:
-        del sbp[f'SB_local_preset_{token}']
+        with _scene_context(scene):
+            bpy.ops.simplebake.local_preset_load_override(name_override=name)
+        with _callbacks_suppressed():
+            for key, value in token['values'].items():
+                if getattr(sbp, key) != value:
+                    setattr(sbp, key, value)
+            if token['cp_empty'] and len(sbp.cp_list):
+                sbp.cp_list.clear()
+            if [(e.obj_name, e.mat_name, e.enabled) for e in sbp.mat_bake_list] != token['mat_bake_list']:
+                sbp.mat_bake_list.clear()
+                for obj_name, mat_name, enabled in token['mat_bake_list']:
+                    entry = sbp.mat_bake_list.add()
+                    entry.obj_name, entry.mat_name, entry.enabled = obj_name, mat_name, enabled
+            for key in ('targetobj', 'targetobj_cycles'):
+                if getattr(sbp, key) != token[key]:
+                    setattr(sbp, key, token[key])
+            if scene.render.bake.cage_object != token['cage_object']:
+                scene.render.bake.cage_object = token['cage_object']
+    except Exception as exc:
+        raise RuntimeError(f'{exc}; the original settings are kept as SimpleBake local preset '
+                           f'"{name}"') from exc
+    del sbp[f'SB_local_preset_{name}']
 
 
 def suspend_preferences():
@@ -231,7 +351,8 @@ def configure_simplebake(sbp, *, preset, texture_dir, batch_name, objects, enabl
     if preset:
         if not has_preset(sbp, preset):
             raise RuntimeError(f'SimpleBake preset "{preset}" does not exist.')
-        bpy.ops.simplebake.local_preset_load_override(name_override=preset)
+        with _scene_context(_scene_of(sbp)):
+            bpy.ops.simplebake.local_preset_load_override(name_override=preset)
     with _callbacks_suppressed():
         for name, value in FORCED_SETTINGS.items():
             if hasattr(sbp, name) and getattr(sbp, name) != value:

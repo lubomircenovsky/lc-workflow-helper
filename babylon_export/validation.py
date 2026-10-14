@@ -1,14 +1,19 @@
 """Read-only preflight. Bake-only dependencies never block existing bake export."""
 from array import array
 from collections import Counter
+import os
+import re
 import bpy
 from .core import Issue, safe_batch_name
 from .materials import find_baked_material
 from .plan import (build_bake_plan, has_saved_variant_data, read_mesh_variants,
                    read_scene_variants, variants_ui_enabled)
 from .core import bake_batch_name
-from .simplebake_adapter import (WORKING_PREFIXES, addon_preferences as simplebake_preferences, availability,
+from .simplebake_adapter import (RESERVED_COLLECTION_TEXT, RESERVED_IMAGES, RESERVED_MATERIALS, RESERVED_SCENES,
+                                 WORKING_PREFIXES, addon_preferences as simplebake_preferences, availability,
                                  bake_properties, expected_channels, has_preset, unused_channel_labels)
+
+NAME_FORMAT_TOKENS = ('%OBJ%', '%BATCH%', '%BAKETYPE%')
 from .exporters import selected_exporter, exporter_filepath, MISSING_EXPORT_PATH
 from .selection import has_image_texture
 
@@ -72,20 +77,52 @@ def _check_bake_inputs(collection, settings, plan, add):
         if settings.bake_uv_name in obj.data.uv_layers and uv_outside_unit_square(obj.data, settings.bake_uv_name):
             add('WARNING', f'UV map "{settings.bake_uv_name}" of object "{obj.name}" leaves the 0-1 square; '
                            'textures repeat there.', obj)
+        if any(mod.type == 'NODES' for mod in obj.modifiers):
+            add('WARNING', f'Object "{obj.name}" has Geometry Nodes; SimpleBake bakes a temporary copy and renames '
+                           'the original during the bake. Do not interrupt that bake.', obj)
     users = Counter(obj.data for obj in baked_objects)
     for mesh, count in users.items():
         if count > 1:
             add('WARNING', f'{count} baked objects share mesh "{mesh.name}"; variant materials on mesh slots '
                            'affect all of them during the bake.')
     # SimpleBake deletes an existing image of the same name before baking.
-    # Images from earlier runs of this collection carry our tag and may be
-    # replaced; any other image with this collection's batch name is protected.
+    # Images made by this tool carry the bbe_owner tag and may be replaced;
+    # any other image with this collection's batch name is protected.
     batch = bake_batch_name(collection.name)
+    batch_pattern = re.compile(re.escape(batch) + r'(?![A-Za-z0-9])')
     foreign = sorted(img.name for img in bpy.data.images
-                     if batch in img.name and img.get('bbe_owner') != collection.name)
+                     if 'bbe_owner' not in img and batch_pattern.search(img.name))
     if foreign:
         add('ERROR', f'{len(foreign)} existing image(s) use the bake name "{batch}" but were not made by this '
                      f'tool (e.g. "{foreign[0]}"); rename them so SimpleBake does not replace them.')
+    folder = bpy.path.abspath(settings.texture_dir) if settings.texture_dir else ''
+    if folder and os.path.isdir(folder):
+        ours = {os.path.normcase(os.path.normpath(bpy.path.abspath(img.filepath)))
+                for img in bpy.data.images if 'bbe_owner' in img and img.filepath}
+        existing = sorted(name for name in os.listdir(folder) if batch_pattern.search(name)
+                          and os.path.normcase(os.path.normpath(os.path.join(folder, name))) not in ours)
+        if existing:
+            add('WARNING', f'{len(existing)} file(s) in the texture folder already use the bake name "{batch}" '
+                           f'(e.g. "{existing[0]}"); the bake overwrites files with the same name.')
+    _check_reserved_names(add)
+
+
+def _check_reserved_names(add):
+    """SimpleBake removes these datablocks by name during every bake."""
+    for scene in bpy.data.scenes:
+        if scene.name in RESERVED_SCENES:
+            add('ERROR', f'Scene "{scene.name}" has a name SimpleBake uses for a temporary scene and deletes; '
+                         'rename it before baking.')
+    for collection in bpy.data.collections:
+        if RESERVED_COLLECTION_TEXT in collection.name and (collection.objects or collection.children):
+            add('ERROR', f'Collection "{collection.name}" contains "{RESERVED_COLLECTION_TEXT}"; SimpleBake '
+                         'deletes such collections. Rename it, or remove it if a crashed bake left it behind.')
+    for name in RESERVED_MATERIALS:
+        if (material := bpy.data.materials.get(name)) is not None and material.users:
+            add('WARNING', f'Material "{name}" is used; SimpleBake deletes it after the bake.')
+    for name in RESERVED_IMAGES:
+        if (image := bpy.data.images.get(name)) is not None and image.users:
+            add('WARNING', f'Image "{name}" is used; SimpleBake deletes it after the bake.')
 
 
 def validate(collection, *, for_export=False, settings=None):
@@ -129,9 +166,14 @@ def validate(collection, *, for_export=False, settings=None):
                 add('ERROR', 'Turn off "Disable other add-ons" in the SimpleBake preferences; '
                              'it would disable LC Workflow during the bake.')
             name_format = getattr(sb_prefs, 'img_name_format', '') if sb_prefs is not None else ''
-            if name_format and not all(token in name_format for token in ('%OBJ%', '%BATCH%')):
-                add('ERROR', 'The SimpleBake image name format must contain %OBJ% and %BATCH%; '
-                             'otherwise bakes of different objects or files overwrite each other.')
+            if name_format and not all(token in name_format for token in NAME_FORMAT_TOKENS):
+                add('ERROR', 'The SimpleBake image name format must contain %OBJ%, %BATCH% and %BAKETYPE%; '
+                             'otherwise bakes of different objects or channels overwrite each other.')
+            max_length = getattr(sb_prefs, 'batch_name_max_length', 0) if sb_prefs is not None else 0
+            batch = bake_batch_name(collection.name)
+            if max_length and len(batch) > max_length:
+                add('ERROR', f'The bake name "{batch}" is longer than SimpleBake allows ({max_length} characters, '
+                             'SimpleBake preferences); shorten the collection name.')
             if sbp is not None and getattr(sbp, 'fake_background', False):
                 add('ERROR', 'Turn off SimpleBake "fake background"; it applies bakes and saves the file.')
             if sbp is not None and not settings.simplebake_preset:

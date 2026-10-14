@@ -31,7 +31,7 @@ Materials that are not ticked are exported as they are. Objects with no baked ma
 - **Cancel After This Pass** stops between passes. SimpleBake cannot be interrupted safely inside a pass; do not press Esc while it bakes.
 - **Clean Up** removes temporary export data left by a crash.
 
-Do not edit or save the file while a bake runs; the panel shows a reminder.
+Do not edit or save the file while a bake runs; the panel shows a reminder. If you switch to another scene, the bake waits before its next pass until you switch back.
 
 ## What the bake changes and restores
 
@@ -44,20 +44,26 @@ While baking, the add-on temporarily assigns variant materials to the slots, act
 
 SimpleBake preferences that would save the file, purge orphan data or switch the viewport to Solid (*Save blend file prior to bake*, *purge after bake*, *solid shading on bake*) are switched off for the run.
 
-When the bake finishes, fails or is cancelled, the add-on restores the original slot materials, face material assignments, UV maps, selection, mode and frame, every SimpleBake setting (saved and loaded with SimpleBake's own preset mechanism) and the SimpleBake preferences. Baked materials and textures stay. If SimpleBake stops inside a pass without finishing (an internal error or Esc), the add-on notices that Blender no longer bakes, restores the original state and reports the failure.
+When the bake finishes, fails or is cancelled, the add-on restores the original slot materials, face material assignments, UV maps, selection, mode (also Edit Mode) and frame, every SimpleBake setting (saved under a temporary SimpleBake local preset `LCW_BBE_restore_<id>` and loaded back, plus the values SimpleBake's loader skips) and the SimpleBake preferences. Baked materials and textures stay. If loading the SimpleBake settings fails, the temporary preset is kept and named in the report, so you can load it in the SimpleBake panel.
+
+If SimpleBake stops inside a pass without finishing (an internal error), the add-on notices that Blender has not baked for 90 seconds, undoes SimpleBake's temporary changes (render engine, camera visibility, other add-ons' handlers, the working collection, Geometry Nodes copies), restores the original state and reports the failure. Pressing **Esc** during a bake is not supported: the pass may end with incomplete textures; bake again.
+
+If LC Workflow is disabled during a bake, the add-on waits until SimpleBake stops and then restores everything. If another file is opened during a bake, only the SimpleBake preferences are restored.
 
 ## Safety checks before baking
 
 Check blocks the bake when:
 
 - SimpleBake's *Disable other add-ons* preference is on (it would disable LC Workflow),
-- the SimpleBake image name format lacks `%OBJ%` or `%BATCH%` (bakes would overwrite each other),
+- the SimpleBake image name format lacks `%OBJ%`, `%BATCH%` or `%BAKETYPE%` (bakes would overwrite each other),
+- the bake name `LCW_<collection>` is longer than SimpleBake's batch name limit,
+- a scene is called `compositor_aa` or `compositor_denoise`, or a collection whose name contains `SimpleBake_Working` holds objects – SimpleBake deletes these,
 - SimpleBake *fake background* is on,
 - a material on a baked object starts with `SBW_` or `SBM_` (reserved by SimpleBake),
 - an existing image uses this collection's bake name (`LCW_<collection>`) but was not made by this tool – SimpleBake would replace it,
 - a baked object has no bake UV, or no material is ticked.
 
-It warns about unsaved changes, bake UVs outside the 0–1 square, baked objects sharing one mesh and channels glTF does not use.
+It warns about unsaved changes, bake UVs outside the 0–1 square, baked objects sharing one mesh, Geometry Nodes on baked objects, files in the texture folder that the bake will overwrite and channels glTF does not use.
 
 ## GLB result
 

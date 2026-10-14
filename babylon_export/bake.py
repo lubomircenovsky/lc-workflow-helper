@@ -19,14 +19,17 @@ from . import simplebake_adapter
 from .core import bake_batch_name
 from .materials import build_baked_material
 from .plan import build_bake_plan
-from .state import restore_state, snapshot_state
+from .state import DATA_SECTIONS, VIEW_SECTIONS, restore_state, snapshot_state
 from .validation import validate
 
 RUNNING, FINISHED, FAILED, CANCELLED = 'RUNNING', 'FINISHED', 'FAILED', 'CANCELLED'
 # SimpleBake keeps its "baking" flag after an aborted macro (an error inside a
-# step, Esc in the Cycles bake). If no bake job runs for this long while the
-# flag is set, the bake is treated as stopped.
+# step). If no bake job runs for this long while the flag is set, the bake is
+# treated as stopped. The tick minimum keeps one long blocking SimpleBake step
+# (saving large textures) from counting as idle time: the timer cannot tick
+# while Blender is busy.
 DEFAULT_STALL_SECONDS = 90.0
+STALL_MIN_TICKS = 20
 
 _active_job = None
 
@@ -44,13 +47,39 @@ def abandon_active_job(*, restore_data):
     """Stop the active job when the add-on unregisters or a file loads.
 
     ``restore_data`` restores the scene (unregister); on file load the scene
-    is being replaced, so only global preferences are restored.
+    is being replaced, so only global preferences are restored. While
+    SimpleBake still bakes nothing is restored yet - its finishing step would
+    otherwise run with the user's purge/save preferences on variant data -
+    and a persistent timer finishes the job once SimpleBake stops. Return
+    that timer function (tests call it directly), or None.
     """
     job = _active_job
     set_active_job(None)
     if job is None or job.result:
-        return
-    if restore_data and not job.adapter_is_baking():
+        return None
+    job.remove_ui_timer()
+    if not job.adapter_is_baking():
+        _finish_abandoned(job, restore_data)
+        return None
+    job.idle_since, job.idle_ticks = None, 0
+
+    def finish_when_stopped():
+        try:
+            if job.adapter_is_baking():
+                if not job._stalled():
+                    return 1.0
+                job.adapter.recover_after_stall(job.scene)
+        except Exception:  # noqa: BLE001 - never leave preferences suspended
+            pass
+        _finish_abandoned(job, restore_data)
+        return None
+
+    bpy.app.timers.register(finish_when_stopped, first_interval=1.0, persistent=True)
+    return finish_when_stopped
+
+
+def _finish_abandoned(job, restore_data):
+    if restore_data and job.scene_valid():
         job.finish(CANCELLED, 'Bake stopped because LC Workflow was disabled.')
     else:
         job.restore_preferences_only()
@@ -64,6 +93,7 @@ class BakeJob:
     def __init__(self, collection, *, adapter=simplebake_adapter, stall_seconds=DEFAULT_STALL_SECONDS,
                  clock=time.monotonic):
         self.collection = collection
+        self.collection_name = collection.name
         self.settings = collection.lcw_babylon_export
         self.adapter = adapter
         self.stall_seconds = stall_seconds
@@ -76,8 +106,12 @@ class BakeJob:
         self.pass_index = -1
         self.phase = 'idle'
         self.operation_id = ''
+        self.operation_ids = []
         self.expected = set()
         self.idle_since = None
+        self.idle_ticks = 0
+        self.waiting = ''
+        self.ui_timer = None
         self.cancel_requested = False
         self.pending = None
         self.built = []
@@ -95,6 +129,8 @@ class BakeJob:
             return 'Preparing bake...'
         if self.result or self.phase == 'draining':
             return self.message
+        if self.waiting:
+            return self.waiting
         current = self.plan.passes[self.pass_index] if 0 <= self.pass_index < self.total_passes else None
         label = 'default state' if current is None or current.variant_idx is None else f'variant {current.variant_idx}'
         objects = ', '.join(sorted(o.name for o in current.objects)) if current else ''
@@ -103,6 +139,22 @@ class BakeJob:
 
     def request_cancel(self):
         self.cancel_requested = True
+
+    def scene_valid(self):
+        try:
+            return self.scene is not None and bool(self.scene.name)
+        except ReferenceError:
+            return False
+
+    def remove_ui_timer(self):
+        if self.ui_timer is None:
+            return
+        window_manager, timer = self.ui_timer
+        self.ui_timer = None
+        try:
+            window_manager.event_timer_remove(timer)
+        except Exception:  # noqa: BLE001 - already gone with its window
+            pass
 
     def adapter_is_baking(self):
         try:
@@ -119,9 +171,11 @@ class BakeJob:
         if not self.plan.passes:
             raise BakeError('No material is selected for baking.')
         self.scene = bpy.context.scene
+        active = bpy.context.view_layer.objects.active
+        original_mode = active.mode if active else 'OBJECT'  # recorded before leaving Edit Mode
         if bpy.context.object and bpy.context.object.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        self.state = snapshot_state(self.plan)
+        self.state = snapshot_state(self.plan, mode=original_mode)
         try:
             sbp = self.adapter.bake_properties(self.scene)
             self.settings_token = self.adapter.save_settings(sbp)
@@ -146,6 +200,13 @@ class BakeJob:
             if self.phase == 'next':
                 if self.cancel_requested:
                     return self.finish(CANCELLED, 'Bake cancelled; completed passes were kept.')
+                if not self.scene_valid():
+                    return self.finish(FAILED, 'Bake stopped: its scene was deleted.')
+                if bpy.context.scene != self.scene:
+                    # SimpleBake bakes the scene shown in the window.
+                    self.waiting = f'Waiting: switch back to scene "{self.scene.name}" to continue the bake.'
+                    return RUNNING
+                self.waiting = ''
                 self.pass_index += 1
                 if self.pass_index >= self.total_passes:
                     return self.finish(FINISHED, self._summary())
@@ -155,9 +216,10 @@ class BakeJob:
             if self.phase == 'baking':
                 if self.adapter.is_baking():
                     if self._stalled():
-                        self.adapter.clear_stuck_bake()
-                        raise BakeError(f'SimpleBake stopped during pass {self.pass_index + 1} without finishing '
-                                        '(an error inside SimpleBake or Esc in the bake).')
+                        problems = self.adapter.recover_after_stall(self.scene)
+                        detail = f' Not undone: {"; ".join(problems)}.' if problems else ''
+                        raise BakeError(f'SimpleBake stopped during pass {self.pass_index + 1} without finishing.'
+                                        f'{detail} Check the file; File > Revert returns to the last save.')
                     return RUNNING
                 self._collect(self.plan.passes[self.pass_index])
                 self.phase = 'next'
@@ -177,18 +239,23 @@ class BakeJob:
             return self.result
         self.result, self.message = status, message
         errors = []
-        if self.state is not None:
-            try:
-                restore_state(self.state)
-            except Exception as exc:  # noqa: BLE001
-                errors.append(str(exc))
+        # Materials first: loading the SimpleBake settings rebuilds its
+        # material list from the slots and may change active UVs, which the
+        # view sections then put back.
+        self._restore(DATA_SECTIONS, errors)
         if self.settings_token:
-            try:
-                self.adapter.restore_settings(self.adapter.bake_properties(self.scene), self.settings_token)
-                self.settings_token = None
-            except Exception as exc:  # noqa: BLE001
-                errors.append(f'SimpleBake settings: {exc}')
+            if not self.scene_valid():
+                errors.append('SimpleBake settings: the scene was deleted')
+            else:
+                try:
+                    self.adapter.restore_settings(self.adapter.bake_properties(self.scene), self.settings_token)
+                    self.settings_token = None
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f'SimpleBake settings: {exc}')
+        self._restore(VIEW_SECTIONS, errors)
+        self._tag_outputs()
         self.restore_preferences_only()
+        self.remove_ui_timer()
         if errors:
             self.result = FAILED
             self.message = f'{message} ' + '; '.join(errors)
@@ -203,15 +270,34 @@ class BakeJob:
             self.saved_preferences = None
 
     # -- internals ------------------------------------------------------
+    def _restore(self, sections, errors):
+        if self.state is None:
+            return
+        try:
+            restore_state(self.state, sections)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
+
+    def _tag_outputs(self):
+        """Mark every image our SimpleBake runs made (unused channels and failed
+        passes too), so later bakes of this collection may replace them."""
+        ids = set(self.operation_ids)
+        if not ids:
+            return
+        for image in bpy.data.images:
+            if image.get('SB_bake_operation_id') in ids and 'bbe_owner' not in image:
+                image['bbe_owner'] = self.collection_name
+
     def _stalled(self):
         """True once SimpleBake claims to bake but Blender runs no bake job."""
         if self.adapter.bake_job_running():
-            self.idle_since = None
+            self.idle_since, self.idle_ticks = None, 0
             return False
         now = self.clock()
         if self.idle_since is None:
             self.idle_since = now
-        return now - self.idle_since >= self.stall_seconds
+        self.idle_ticks += 1
+        return now - self.idle_since >= self.stall_seconds and self.idle_ticks >= STALL_MIN_TICKS
 
     def _start_pass(self, bake_pass):
         objects = sorted(bake_pass.objects, key=lambda o: o.name)
@@ -222,7 +308,7 @@ class BakeJob:
         sbp = self.adapter.bake_properties(self.scene)
         self.adapter.configure_simplebake(
             sbp, preset=self.settings.simplebake_preset, texture_dir=self.settings.texture_dir,
-            batch_name=bake_batch_name(self.collection.name), objects=objects,
+            batch_name=bake_batch_name(self.collection_name), objects=objects,
             enabled_pairs=bake_pass.to_bake)
         # Activate the bake UV last: a SimpleBake preset may change active UVs.
         uv_name = self.settings.bake_uv_name
@@ -234,7 +320,8 @@ class BakeJob:
         if not self.expected:
             raise BakeError('SimpleBake has no channel selected that glTF can use.')
         self.operation_id = uuid.uuid4().hex
-        self.idle_since = None
+        self.operation_ids.append(self.operation_id)
+        self.idle_since, self.idle_ticks = None, 0
         self.adapter.start_bake(self.operation_id)
 
     def _collect(self, bake_pass):
@@ -248,7 +335,7 @@ class BakeJob:
             raise BakeError('SimpleBake did not produce all channels for ' + '; '.join(problems))
         for (obj, mat), maps in sorted(images.items(), key=lambda item: (item[0][0].name, item[0][1].name)):
             for image in maps.values():
-                image['bbe_owner'] = self.collection.name  # ours: later runs may replace it
+                image['bbe_owner'] = self.collection_name  # ours: later runs may replace it
                 if image not in self.images:
                     self.images.append(image)
             self.built.append(build_baked_material(mat, obj, maps, self.settings))

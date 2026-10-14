@@ -6,7 +6,7 @@ from .plan import build_bake_plan
 from .settings import target_collection
 from .validation import validate
 from .selection import refresh_material_list
-from .bake import CANCELLED, FINISHED, RUNNING, BakeJob, active_job, set_active_job
+from .bake import CANCELLED, FAILED, FINISHED, RUNNING, BakeJob, active_job, set_active_job
 
 
 def store_issues(state, issues):
@@ -182,6 +182,7 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
         set_active_job(job)
         state.last_report = job.progress_text()
         self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
+        job.ui_timer = (context.window_manager, self._timer)
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
@@ -191,14 +192,17 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
     def modal(self, context, event):
         job = self._job
         if active_job() is not job:
-            # Abandoned (file load or add-on unregister); originals were handled there.
+            # Abandoned (file load or add-on unregister); originals are handled there.
             return self._end(context, {'CANCELLED'})
-        # Esc is not handled here: it reaches Blender's bake first and aborts
-        # SimpleBake mid-pass; the job's watchdog then restores originals.
+        # Esc is not handled here; SimpleBake's own Esc handling applies, so
+        # the panel asks the user not to press it during a bake.
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}
-        status = job.step()
-        state = job.scene.lcw_babylon_export
+        try:
+            status = job.step()
+        except Exception as exc:  # noqa: BLE001 - step() handles its own errors; this is a last resort
+            status = job.finish(FAILED, f'Bake failed: {exc}')
+        state = (job.scene if job.scene_valid() else context.scene).lcw_babylon_export
         state.last_report = job.progress_text()
         _redraw(context)
         if status == RUNNING:
@@ -214,9 +218,8 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
         return self._end(context, {'FINISHED'} if status == FINISHED else {'CANCELLED'})
 
     def _end(self, context, result):
-        if self._timer is not None:
-            context.window_manager.event_timer_remove(self._timer)
-            self._timer = None
+        self._job.remove_ui_timer()
+        self._timer = None
         _redraw(context)
         return result
 

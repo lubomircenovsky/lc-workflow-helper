@@ -2,7 +2,9 @@
 
 SimpleBake settings are not handled here; ``simplebake_adapter.save_settings``
 / ``restore_settings`` snapshot them with SimpleBake's own preset mechanism.
-Restore runs every section even if one fails and reports all failures.
+Restore runs every section even if one fails and reports all failures. The
+bake restores DATA_SECTIONS, then the SimpleBake settings (loading them reads
+the slot materials and may change active UVs), then VIEW_SECTIONS.
 """
 from array import array
 from dataclasses import dataclass, field
@@ -20,6 +22,8 @@ class State:
     frames: list
     mesh_materials: list
     face_material_indices: list = field(default_factory=list)
+    render_engines: list = field(default_factory=list)
+    camera_visibility: list = field(default_factory=list)
 
 
 def _face_indices(mesh):
@@ -28,7 +32,8 @@ def _face_indices(mesh):
     return values
 
 
-def snapshot_state(plan, context=None):
+def snapshot_state(plan, context=None, mode=None):
+    """``mode`` overrides the active object's mode (the caller may have left Edit Mode)."""
     context = context or bpy.context
     active = context.view_layer.objects.active
     meshes = list(dict.fromkeys(o.data for o in plan.objects))
@@ -41,11 +46,13 @@ def snapshot_state(plan, context=None):
             for mesh in uv_meshes],
         selected=list(context.selected_objects),
         active=active,
-        mode=active.mode if active else 'OBJECT',
+        mode=mode or (active.mode if active else 'OBJECT'),
         view_layer=context.view_layer,
         frames=[(scene, scene.frame_current, scene.frame_subframe) for scene in bpy.data.scenes],
         mesh_materials=[(mesh, list(mesh.materials)) for mesh in meshes],
         face_material_indices=[(mesh, _face_indices(mesh)) for mesh in meshes],
+        render_engines=[(scene, scene.render.engine) for scene in bpy.data.scenes],
+        camera_visibility=[(o, o.visible_camera) for o in plan.objects],
     )
 
 
@@ -89,6 +96,17 @@ def _restore_uvs(state):
                 uv.active_render = flag
 
 
+def _restore_render(state):
+    # SimpleBake switches to Cycles and turns on camera visibility while it
+    # bakes; normally it reverts both itself.
+    for scene, engine in state.render_engines:
+        if scene.render.engine != engine:
+            scene.render.engine = engine
+    for obj, visible in state.camera_visibility:
+        if obj.visible_camera != visible:
+            obj.visible_camera = visible
+
+
 def _restore_frames(state):
     for scene, frame, subframe in state.frames:
         if scene.frame_current != frame or scene.frame_subframe != subframe:
@@ -111,14 +129,19 @@ def _restore_mode(state):
             bpy.ops.object.mode_set(mode=state.mode)
 
 
-def restore_state(state):
-    """Restore everything; raise one RuntimeError listing every failed part."""
+def _object_mode(_state):
+    if bpy.context.object and bpy.context.object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+
+DATA_SECTIONS = (('object mode', _object_mode), ('frames', _restore_frames), ('render settings', _restore_render),
+                 ('mesh materials', _restore_mesh_materials), ('material slots', _restore_slots))
+VIEW_SECTIONS = (('UV maps', _restore_uvs), ('selection', _restore_selection), ('mode', _restore_mode))
+
+
+def restore_state(state, sections=DATA_SECTIONS + VIEW_SECTIONS):
+    """Restore the given sections; raise one RuntimeError listing every failed part."""
     errors = []
-    sections = (('object mode', lambda s: bpy.context.object and bpy.context.object.mode != 'OBJECT'
-                 and bpy.ops.object.mode_set(mode='OBJECT')),
-                ('frames', _restore_frames), ('mesh materials', _restore_mesh_materials),
-                ('material slots', _restore_slots), ('UV maps', _restore_uvs),
-                ('selection', _restore_selection), ('mode', _restore_mode))
     for label, restore in sections:
         try:
             restore(state)
