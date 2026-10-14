@@ -193,7 +193,7 @@ def round3_fixture(root=None):
         before_choices = [(item.material, item.bake, item.user_override) for item in settings.material_selections]
         draw_calls = []
         LCW_PT_babylon_export.draw(SimpleNamespace(layout=Layout(draw_calls)), bpy.context)
-        assert 'Collection Exporteru kolekce' in ' '.join(call[1] for call in draw_calls if call[0] == 'label')
+        assert 'Collection Exporter' in ' '.join(call[1] for call in draw_calls if call[0] == 'label')
         assert before_choices == [(item.material, item.bake, item.user_override) for item in settings.material_selections]
         with patch.object(simplebake_adapter, 'availability', return_value=('FakeSimpleBake', (2, 9, 11))), \
                 patch('LC_workflow_addon.babylon_export.validation.availability', return_value=('FakeSimpleBake', (2, 9, 11))):
@@ -224,7 +224,7 @@ def round3_fixture(root=None):
         # This row shifted after deletion; its explicit choice must survive.
         refresh_material_list(collection)
         assert not choices[materials[2]].bake and choices[materials[2]].user_override
-        assert any(i.level == 'WARNING' and 'dostane UV' in i.text for i in validate(collection, for_export=True))
+        assert any(i.level == 'WARNING' and 'it gets UV map' in i.text for i in validate(collection, for_export=True))
         print('PASS babylon_round3_exporter_selection_preflight')
         if root is None:
             # Exercise copy/restore in memory before the filesystem fixture.
@@ -488,13 +488,13 @@ try:
         prefs.KHR_materials_variants_ui = False
         try:
             disabled_errors = [i.text for i in validate(collection, for_export=True) if i.level == 'ERROR']
-            assert disabled_errors == ['Zapněte materiálové varianty v nastavení exportéru glTF.'], disabled_errors
+            assert disabled_errors == ['Enable material variants in the glTF exporter preferences.'], disabled_errors
         finally:
             prefs.KHR_materials_variants_ui = True
         assert len(scene.gltf2_KHR_materials_variants_variants) == 2
         print('PASS babylon_variants_preference_validation')
         bake_errors = [i.text for i in validate(collection) if i.level == 'ERROR']
-        assert bake_errors == ['SimpleBake není nainstalovaný nebo zapnutý – pečení nebude dostupné'], bake_errors
+        assert bake_errors == ['SimpleBake is not installed or enabled; baking is unavailable'], bake_errors
         before, context_before = original_state(objects), context_state()
         material_count, image_count = len(bpy.data.materials), len(bpy.data.images)
         sb_before = fake_simplebake_values(fake_sb)
@@ -654,7 +654,7 @@ try:
 
         objects[1].data.uv_layers.remove(objects[1].data.uv_layers['SimpleBake'])
         errors = [i.text for i in validate(collection, for_export=True) if i.level == 'ERROR']
-        assert errors == ['Objekt „Fixture 1“ nemá UV „SimpleBake“.'], errors
+        assert errors == ['Object "Fixture 1" has no UV map "SimpleBake".'], errors
         print('PASS babylon_validation_exact_missing_uv')
 
         for items, factory in ((bpy.data.meshes, lambda: bpy.data.meshes.new('Orphan')),

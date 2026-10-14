@@ -6,10 +6,10 @@ from .exporters import selected_exporter, exporter_filepath, MISSING_EXPORT_PATH
 
 class LCW_UL_babylon_materials(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
-        layout.prop(item, 'bake', text='Péct')
-        layout.label(text=item.material.name if item.material else 'Chybějící materiál')
+        layout.prop(item, 'bake', text='Bake')
+        layout.label(text=item.material.name if item.material else 'Missing material')
         if item.user_override:
-            layout.label(text='Vlastní')
+            layout.label(text='Custom')
 
 
 class LCW_PT_babylon_export(bpy.types.Panel):
@@ -25,11 +25,11 @@ class LCW_PT_babylon_export(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
         state = context.scene.lcw_babylon_export
-        layout.prop(state, 'target_collection', text='Kolekce')
+        layout.prop(state, 'target_collection', text='Collection')
         collection = target_collection(context)
         if state.target_collection is None:
             # Only the fallback needs spelling out; a picked collection is already shown.
-            layout.label(text=f'Aktivní kolekce: {collection.name}', icon='OUTLINER_COLLECTION')
+            layout.label(text=f'Active collection: {collection.name}', icon='OUTLINER_COLLECTION')
         settings = collection.lcw_babylon_export
         for name in ('simplebake_preset', 'bake_uv_name', 'texture_dir', 'baked_suffix',
                      'exporter_name', 'export_variants'):
@@ -38,15 +38,15 @@ class LCW_PT_babylon_export(bpy.types.Panel):
         if exporter is not None and not exporter_filepath(exporter):
             for line in wrap(MISSING_EXPORT_PATH, width=48):
                 layout.label(text=line, icon='ERROR')
-        layout.operator('lcw.babylon_refresh_materials', text='Obnovit seznam materiálů')
+        layout.operator('lcw.babylon_refresh_materials', text='Refresh Material List')
         layout.template_list('LCW_UL_babylon_materials', '', settings, 'material_selections',
                              settings, 'material_index', rows=5)
         row = layout.row(align=True)
-        row.operator('lcw.babylon_check', text='Kontrola', icon='VIEWZOOM')
-        row.operator('lcw.babylon_export', text='Exportovat', icon='EXPORT')
-        row.operator('lcw.babylon_cleanup', text='Uklidit', icon='TRASH')
+        row.operator('lcw.babylon_check', text='Check', icon='VIEWZOOM')
+        row.operator('lcw.babylon_export', text='Export', icon='EXPORT')
+        row.operator('lcw.babylon_cleanup', text='Clean Up', icon='TRASH')
         # Baking buttons appear with phase 2; until then one note instead of dead buttons.
-        layout.label(text='Pečení přes SimpleBake – fáze 2', icon='INFO')
+        layout.label(text='Baking with SimpleBake: coming in phase 2', icon='INFO')
         box = layout.box()
         for line in wrap(state.last_report[:180], width=48):
             box.label(text=line)
@@ -59,4 +59,4 @@ class LCW_PT_babylon_export(bpy.types.Panel):
             for line in wrap(item.text[:180], width=48):
                 column.label(text=line, icon='ERROR' if item.level == 'ERROR' else 'INFO')
         if len(state.issues) > 6:
-            box.label(text=f'Dalších {len(state.issues) - 6} problémů.')
+            box.label(text=f'{len(state.issues) - 6} more issue(s).')

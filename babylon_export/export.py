@@ -31,7 +31,7 @@ def cleanup(run_id=None):
         bpy.data.batch_remove(ids=marked)
     remaining = list(temporary_datablocks(run_id))
     if remaining:
-        raise RuntimeError('Po úklidu zůstala dočasná data Babylon exportu.')
+        raise RuntimeError('Temporary Babylon export data remained after cleanup.')
     return len(marked)
 
 
@@ -189,7 +189,7 @@ def export_collection(collection, settings=None, *, result_info=None):
             missing = set(plan.variant_ids) - referenced
             if missing:
                 if anchor is None:
-                    raise ValueError('Varianty nemají žádný použitý výchozí materiálový slot.')
+                    raise ValueError('Variants have no used default material slot.')
                 mesh, index, material = anchor
                 entry = mesh.gltf2_variant_mesh_data.add()
                 entry.material_slot_index, entry.material = index, material
@@ -204,7 +204,7 @@ def export_collection(collection, settings=None, *, result_info=None):
         with bpy.context.temp_override(scene=first_scene, view_layer=layer):
             result = _export_gltf(props)
         if result != {'FINISHED'}:
-            raise RuntimeError('Export glTF byl zrušen nebo selhal.')
+            raise RuntimeError('glTF export was cancelled or failed.')
         if result_info is not None:
             result_info.update(export_settings=props, source_objects=len(plan.objects), path=str(path))
         return path

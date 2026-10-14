@@ -15,7 +15,7 @@ def has_image_texture(material):
 
 def material_inventory(collection):
     if not variants_ui_enabled() and has_saved_variant_data(collection, include_scene=False):
-        raise ValueError('Zapněte materiálové varianty v nastavení exportéru glTF.')
+        raise ValueError('Enable material variants in the glTF exporter preferences.')
     materials, variant_materials = set(), set()
     for obj in collection.all_objects:
         if obj.type != 'MESH':

@@ -1,6 +1,6 @@
 """Identify Collection Exporters by operator RNA, independent of their label."""
 MISSING_EXPORT_PATH = (
-    'Exportér nemá výstupní cestu. Nastavte ji v Collection Exporteru kolekce.'
+    'The exporter has no output path. Set it in the collection\'s Collection Exporter.'
 )
 
 

@@ -20,24 +20,24 @@ def bake_properties(scene):
 
 def configure_simplebake(settings, bake_pass, objects):
     """Phase 2: load preset, force PBR/per-material/existing UV, set object list."""
-    raise NotImplementedError("Pečení přes SimpleBake – fáze 2")
+    raise NotImplementedError("Baking with SimpleBake: phase 2")
 
 
 def start_bake():
     """Phase 2: invoke the asynchronous foreground bake with window context."""
-    raise NotImplementedError("Pečení přes SimpleBake – fáze 2")
+    raise NotImplementedError("Baking with SimpleBake: phase 2")
 
 
 def poll_bake():
     """Phase 2: completion, cancellation and timeout handling."""
-    raise NotImplementedError("Pečení přes SimpleBake – fáze 2")
+    raise NotImplementedError("Baking with SimpleBake: phase 2")
 
 
 def cancel_bake():
     """Phase 2: request halt; wait for poll_bake before restoring originals."""
-    raise NotImplementedError("Pečení přes SimpleBake – fáze 2")
+    raise NotImplementedError("Baking with SimpleBake: phase 2")
 
 
 def collect_bake_images(bake_pass):
     """Phase 2: return {(object, material): {channel: Image}} using SB tags."""
-    raise NotImplementedError("Pečení přes SimpleBake – fáze 2")
+    raise NotImplementedError("Baking with SimpleBake: phase 2")

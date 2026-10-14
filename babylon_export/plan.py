@@ -69,7 +69,7 @@ def build_bake_plan(collection, *, export_variants=None):
     if export_variants is None:
         export_variants = collection.lcw_babylon_export.export_variants
     if not variants_ui_enabled() and has_saved_variant_data(collection, include_scene=export_variants):
-        raise ValueError('Zapněte materiálové varianty v nastavení exportéru glTF.')
+        raise ValueError('Enable material variants in the glTF exporter preferences.')
     objects = sorted((o for o in collection.all_objects if o.type == 'MESH'), key=lambda o: o.name)
     defaults, variants = {}, {}
     ids = [idx for idx, _name in read_scene_variants()] if export_variants else []

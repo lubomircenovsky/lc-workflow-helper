@@ -15,9 +15,9 @@ def find_baked_material(src_mat, obj, collection):
 def build_baked_material(src_mat, obj, images, settings):
     unknown = set(images) - CHANNELS
     if unknown:
-        raise ValueError(f"Neznámé kanály: {sorted(unknown)}")
+        raise ValueError(f"Unknown channels: {sorted(unknown)}")
     if not images:
-        raise ValueError("Chybí zapečené obrázky.")
+        raise ValueError("Baked images are missing.")
     collection = settings.id_data
     mat = find_baked_material(src_mat, obj, collection)
     shared = sum(source == src_mat for _obj, source in build_bake_plan(collection).material_pairs()) > 1
@@ -83,6 +83,6 @@ def build_baked_material(src_mat, obj, images, settings):
         group_node.node_tree = group
         group_node.location = (0, -550)
         if 'Occlusion' not in group_node.inputs:
-            raise ValueError("Skupina glTF Material Output nemá vstup Occlusion.")
+            raise ValueError("The glTF Material Output group has no Occlusion input.")
         tree.links.new(textures['ao'].outputs['Color'], group_node.inputs['Occlusion'])
     return mat

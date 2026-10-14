@@ -29,7 +29,7 @@ def refresh_for_operator(operator, collection, state):
 
 class LCW_OT_babylon_refresh_materials(bpy.types.Operator):
     bl_idname = 'lcw.babylon_refresh_materials'
-    bl_label = 'Obnovit seznam materiálů'
+    bl_label = 'Refresh Material List'
     bl_description = 'Refresh used materials and automatic defaults while preserving user choices'
 
     @classmethod
@@ -40,13 +40,13 @@ class LCW_OT_babylon_refresh_materials(bpy.types.Operator):
         collection = target_collection(context)
         if not refresh_for_operator(self, collection, context.scene.lcw_babylon_export):
             return {'CANCELLED'}
-        self.report({'INFO'}, f'Materiály v seznamu: {len(collection.lcw_babylon_export.material_selections)}.')
+        self.report({'INFO'}, f'Materials in list: {len(collection.lcw_babylon_export.material_selections)}.')
         return {'FINISHED'}
 
 
 class LCW_OT_babylon_check(bpy.types.Operator):
     bl_idname = 'lcw.babylon_check'
-    bl_label = 'Kontrola'
+    bl_label = 'Check'
     bl_description = 'Check bake dependencies and existing baked materials separately'
 
     @classmethod
@@ -66,10 +66,10 @@ class LCW_OT_babylon_check(bpy.types.Operator):
         for issue in bake_issues:
             if (issue.level, issue.text) not in shared:
                 item = state.issues.add()
-                item.level, item.text = issue.level, f'Pečení: {issue.text}'
+                item.level, item.text = issue.level, f'Bake: {issue.text}'
         bake_errors = sum(i.level == 'ERROR' for i in bake_issues)
         export_errors = sum(i.level == 'ERROR' for i in export_issues)
-        state.last_report = f'Chyby exportu: {export_errors}. Chyby pečení: {bake_errors}.'
+        state.last_report = f'Export errors: {export_errors}. Bake errors: {bake_errors}.'
         collection.lcw_babylon_export.last_report = state.last_report
         self.report({'WARNING' if export_errors or bake_errors else 'INFO'}, state.last_report)
         return {'FINISHED'}
@@ -77,7 +77,7 @@ class LCW_OT_babylon_check(bpy.types.Operator):
 
 class LCW_OT_babylon_export(bpy.types.Operator):
     bl_idname = 'lcw.babylon_export'
-    bl_label = 'Exportovat'
+    bl_label = 'Export'
     bl_description = 'Export existing baked materials and variants as GLB, then verify and clean up'
 
     @classmethod
@@ -93,7 +93,7 @@ class LCW_OT_babylon_export(bpy.types.Operator):
         issues = validate(collection, for_export=True)
         store_issues(state, issues)
         if any(i.level == 'ERROR' for i in issues):
-            state.last_report = 'Export nelze spustit: ' + next(i.text for i in issues if i.level == 'ERROR')
+            state.last_report = 'Export cannot start: ' + next(i.text for i in issues if i.level == 'ERROR')
             settings.last_report = state.last_report
             self.report({'ERROR'}, state.last_report)
             return {'CANCELLED'}
@@ -110,16 +110,16 @@ class LCW_OT_babylon_export(bpy.types.Operator):
             report.pop('document')
             report.update(info)
             settings.last_report = json.dumps(report, ensure_ascii=False)
-            state.last_report = (f'{path.name}: {report["bytes"]} B. Objekty: {len(plan.objects)}, '
-                                 f'varianty: {report["variants"]}, obrázky: {report["images"]}.')
+            state.last_report = (f'{path.name}: {report["bytes"]} B. Objects: {len(plan.objects)}, '
+                                 f'variants: {report["variants"]}, images: {report["images"]}.')
             if not report['ok']:
-                state.last_report = 'GLB neprošlo kontrolou. ' + state.last_report
+                state.last_report = 'GLB failed verification. ' + state.last_report
                 self.report({'ERROR'}, state.last_report)
                 return {'CANCELLED'}
             self.report({'INFO'}, state.last_report)
             return {'FINISHED'}
         except Exception as exc:
-            state.last_report = f'Export selhal: {exc}'
+            state.last_report = f'Export failed: {exc}'
             settings.last_report = state.last_report
             self.report({'ERROR'}, state.last_report)
             return {'CANCELLED'}
@@ -127,7 +127,7 @@ class LCW_OT_babylon_export(bpy.types.Operator):
 
 class LCW_OT_babylon_cleanup(bpy.types.Operator):
     bl_idname = 'lcw.babylon_cleanup'
-    bl_label = 'Uklidit'
+    bl_label = 'Clean Up'
     bl_description = 'Remove all Babylon temporary datablocks left by an interrupted run'
 
     @classmethod
@@ -137,18 +137,18 @@ class LCW_OT_babylon_cleanup(bpy.types.Operator):
     def execute(self, context):
         try:
             count = cleanup()
-            message = f'Odstraněné dočasné datové bloky: {count}.'
+            message = f'Removed temporary datablocks: {count}.'
             context.scene.lcw_babylon_export.last_report = message
             self.report({'INFO'}, message)
             return {'FINISHED'}
         except Exception as exc:
-            self.report({'ERROR'}, f'Úklid selhal: {exc}')
+            self.report({'ERROR'}, f'Cleanup failed: {exc}')
             return {'CANCELLED'}
 
 
 class LCW_OT_babylon_bake_phase2(bpy.types.Operator):
     bl_idname = 'lcw.babylon_bake_phase2'
-    bl_label = 'Zapéct'
+    bl_label = 'Bake'
     bl_description = 'SimpleBake baking will be implemented in phase 2'
 
     @classmethod
