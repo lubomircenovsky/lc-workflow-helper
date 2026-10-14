@@ -288,7 +288,7 @@ PANEL_ORDER_DEFAULT = (
     "cad_reconstruction",
     "gn_library",
     "workflow_presets",
-    "kalibra_tools",
+    "project_specific_tools",
 )
 
 PANEL_LABELS = {
@@ -304,7 +304,7 @@ PANEL_LABELS = {
     "cad_reconstruction": "CAD Mesh Reconstruction",
     "gn_library": "GN Library",
     "workflow_presets": "Workflow Presets",
-    "kalibra_tools": "Kalibra Tools",
+    "project_specific_tools": "Project specific tools",
 }
 
 
@@ -316,7 +316,12 @@ def normalize_panel_order(raw_value: str | Iterable[str] | None) -> tuple[str, .
     else:
         ordered_keys = [part for part in raw_value if part]
 
-    filtered = [key for key in ordered_keys if key in PANEL_LABELS]
+    filtered = []
+    for key in ordered_keys:
+        if key in {"kalibra_tools", "babylon_export"}:
+            key = "project_specific_tools"
+        if key in PANEL_LABELS and (key != "project_specific_tools" or key not in filtered):
+            filtered.append(key)
     for key in PANEL_ORDER_DEFAULT:
         if key not in filtered:
             filtered.append(key)
