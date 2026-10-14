@@ -103,6 +103,8 @@ RESERVED_COLLECTION_TEXT = 'SimpleBake_Working'  # any collection containing it 
 RESERVED_SCENES = ('compositor_aa', 'compositor_denoise')
 RESERVED_MATERIALS = ('SimpleBake_Placeholder',)
 RESERVED_IMAGES = ('SB_excluded_mat_dummy',)
+# bpy.app.driver_namespace key: count of abandoned jobs still waiting to restore.
+PENDING_RESTORE_KEY = 'lcw_babylon_bake_pending_restore'
 
 
 def availability():

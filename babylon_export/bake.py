@@ -62,21 +62,39 @@ def abandon_active_job(*, restore_data):
         _finish_abandoned(job, restore_data)
         return None
     job.idle_since, job.idle_ticks = None, 0
+    _set_pending(+1)
 
     def finish_when_stopped():
         try:
             if job.adapter_is_baking():
                 if not job._stalled():
-                    return 1.0
+                    return 0.5
                 # After a file load the scene is gone: global SimpleBake state only.
                 job.adapter.recover_after_stall(job.scene, data=restore_data and job.scene_valid())
         except Exception:  # noqa: BLE001 - never leave preferences suspended
             pass
-        _finish_abandoned(job, restore_data)
+        try:
+            _finish_abandoned(job, restore_data)
+        finally:
+            _set_pending(-1)
         return None
 
-    bpy.app.timers.register(finish_when_stopped, first_interval=1.0, persistent=True)
+    bpy.app.timers.register(finish_when_stopped, first_interval=0.5, persistent=True)
     return finish_when_stopped
+
+
+# Runtime-only flag that survives a reload of this add-on (disable/enable):
+# a new bake must not start until an abandoned job is restored.
+_PENDING_KEY = simplebake_adapter.PENDING_RESTORE_KEY
+
+
+def _set_pending(delta):
+    namespace = bpy.app.driver_namespace
+    namespace[_PENDING_KEY] = max(0, namespace.get(_PENDING_KEY, 0) + delta)
+
+
+def restore_pending():
+    return bpy.app.driver_namespace.get(_PENDING_KEY, 0) > 0
 
 
 def _finish_abandoned(job, restore_data):

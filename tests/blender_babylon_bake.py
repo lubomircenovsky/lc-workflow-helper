@@ -462,11 +462,14 @@ try:
         try:
             assert finish_later is not None and job.result is None
             assert not any(adapter.prefs.values()), 'preferences stay suspended while SimpleBake bakes'
+            assert any('still being restored' in i.text for i in validation_module.validate(collection)
+                       if i.level == 'ERROR'), 'no new bake before the abandoned one is restored'
             assert slot_names(door)[:2] == ['Wood_A', 'Wood_A']
             for _ in range(10):
                 if finish_later() is None:
                     break
             assert job.result == CANCELLED, job.message
+            assert not bake_module.restore_pending()
             assert_restored(door, before, sbp, sb_before, adapter)
         finally:
             if bpy.app.timers.is_registered(finish_later):
