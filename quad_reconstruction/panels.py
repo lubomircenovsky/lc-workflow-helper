@@ -156,9 +156,12 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
                 text="Reconstruct",
                 icon="MOD_TRIANGULATE",
             )
-        action_box.prop(state, "progress", text="Progress", slider=True)
-        if state.progress_label:
-            action_box.label(text=state.progress_label, icon="TIME")
+        # Read-only bar: progress is job output, never a user input.
+        action_box.progress(
+            factor=state.progress,
+            text=state.progress_label or f"{state.progress:.0%}",
+            type="BAR",
+        )
         action_box.label(text=f"Status: {state.job_status.replace('_', ' ').title()}")
         if state.job_message:
             action_box.label(text=state.job_message, icon="INFO")
