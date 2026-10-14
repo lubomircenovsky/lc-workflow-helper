@@ -68,7 +68,8 @@ def abandon_active_job(*, restore_data):
             if job.adapter_is_baking():
                 if not job._stalled():
                     return 1.0
-                job.adapter.recover_after_stall(job.scene)
+                # After a file load the scene is gone: global SimpleBake state only.
+                job.adapter.recover_after_stall(job.scene, data=restore_data and job.scene_valid())
         except Exception:  # noqa: BLE001 - never leave preferences suspended
             pass
         _finish_abandoned(job, restore_data)

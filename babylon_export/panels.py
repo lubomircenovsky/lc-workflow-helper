@@ -55,8 +55,8 @@ class LCW_PT_babylon_export(bpy.types.Panel):
                              text=f'Pass {max(1, job.pass_index + 1)}/{job.total_passes}', type='BAR')
             warning = box.column(align=True)
             warning.alert = True
-            warning.label(text='Do not edit or save the file', icon='ERROR')
-            warning.label(text='or press Esc until the bake finishes.')
+            warning.label(text='Do not edit or save the file,', icon='ERROR')
+            warning.label(text='switch scenes or press Esc until it finishes.')
             box.operator('lcw.babylon_bake_cancel', text='Cancel After This Pass', icon='CANCEL')
         else:
             row = layout.row(align=True)

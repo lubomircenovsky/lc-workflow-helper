@@ -24,6 +24,7 @@ class State:
     face_material_indices: list = field(default_factory=list)
     render_engines: list = field(default_factory=list)
     camera_visibility: list = field(default_factory=list)
+    render_visibility: list = field(default_factory=list)
 
 
 def _face_indices(mesh):
@@ -53,6 +54,8 @@ def snapshot_state(plan, context=None, mode=None):
         face_material_indices=[(mesh, _face_indices(mesh)) for mesh in meshes],
         render_engines=[(scene, scene.render.engine) for scene in bpy.data.scenes],
         camera_visibility=[(o, o.visible_camera) for o in plan.objects],
+        # SimpleBake "isolate objects" hides other meshes from render per object.
+        render_visibility=[(o, o.hide_render) for o in bpy.data.objects if o.library is None],
     )
 
 
@@ -96,21 +99,46 @@ def _restore_uvs(state):
                 uv.active_render = flag
 
 
+def _each(items, restore):
+    """Restore every item; a deleted datablock must not stop the others."""
+    failed = []
+    for item in items:
+        try:
+            restore(*item)
+        except ReferenceError:
+            continue
+        except Exception as exc:  # noqa: BLE001
+            failed.append(str(exc))
+    if failed:
+        raise RuntimeError(failed[0] if len(failed) == 1 else f'{failed[0]} (+{len(failed) - 1} more)')
+
+
 def _restore_render(state):
-    # SimpleBake switches to Cycles and turns on camera visibility while it
-    # bakes; normally it reverts both itself.
-    for scene, engine in state.render_engines:
-        if scene.render.engine != engine:
-            scene.render.engine = engine
-    for obj, visible in state.camera_visibility:
-        if obj.visible_camera != visible:
-            obj.visible_camera = visible
+    # SimpleBake switches to Cycles, turns on camera visibility and may hide
+    # other objects from render while it bakes; normally it reverts this itself.
+    def engine(scene, value):
+        if scene.render.engine != value:
+            scene.render.engine = value
+
+    def camera(obj, value):
+        if obj.visible_camera != value:
+            obj.visible_camera = value
+
+    def hidden(obj, value):
+        if obj.hide_render != value:
+            obj.hide_render = value
+
+    _each(state.render_engines, engine)
+    _each(state.camera_visibility, camera)
+    _each(state.render_visibility, hidden)
 
 
 def _restore_frames(state):
-    for scene, frame, subframe in state.frames:
-        if scene.frame_current != frame or scene.frame_subframe != subframe:
-            scene.frame_set(frame, subframe=subframe)
+    def frame(scene, value, subframe):
+        if scene.frame_current != value or scene.frame_subframe != subframe:
+            scene.frame_set(value, subframe=subframe)
+
+    _each(state.frames, frame)
 
 
 def _restore_selection(state):

@@ -11,11 +11,12 @@ from .plan import (build_bake_plan, has_saved_variant_data, read_mesh_variants,
 from .core import bake_batch_name
 from .simplebake_adapter import (RESERVED_COLLECTION_TEXT, RESERVED_IMAGES, RESERVED_MATERIALS, RESERVED_SCENES,
                                  WORKING_PREFIXES, addon_preferences as simplebake_preferences, availability,
-                                 bake_properties, expected_channels, has_preset, unused_channel_labels)
-
-NAME_FORMAT_TOKENS = ('%OBJ%', '%BATCH%', '%BAKETYPE%')
+                                 bake_properties, expected_channels, has_preset, is_busy as simplebake_busy,
+                                 unused_channel_labels)
 from .exporters import selected_exporter, exporter_filepath, MISSING_EXPORT_PATH
 from .selection import has_image_texture
+
+NAME_FORMAT_TOKENS = ('%OBJ%', '%BATCH%', '%BAKETYPE%')
 
 
 def has_principled(material):
@@ -158,6 +159,8 @@ def validate(collection, *, for_export=False, settings=None):
         else:
             if version[:2] != (2, 9):
                 add('ERROR', f'Unsupported SimpleBake version {version}; 2.9.x is expected.')
+            if simplebake_busy():
+                add('ERROR', 'SimpleBake is already baking; wait until it finishes.')
             sbp = bake_properties(bpy.context.scene)
             if settings.simplebake_preset and not has_preset(sbp, settings.simplebake_preset):
                 add('ERROR', 'The selected SimpleBake preset does not exist.')

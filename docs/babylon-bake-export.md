@@ -31,7 +31,7 @@ Materials that are not ticked are exported as they are. Objects with no baked ma
 - **Cancel After This Pass** stops between passes. SimpleBake cannot be interrupted safely inside a pass; do not press Esc while it bakes.
 - **Clean Up** removes temporary export data left by a crash.
 
-Do not edit or save the file while a bake runs; the panel shows a reminder. If you switch to another scene, the bake waits before its next pass until you switch back.
+Do not edit or save the file, switch scenes or press Esc while a bake runs; the panel shows a reminder. If another scene is shown when a pass ends, the bake waits before its next pass until you switch back. Baking cannot start while SimpleBake is already baking.
 
 ## What the bake changes and restores
 
@@ -46,7 +46,7 @@ SimpleBake preferences that would save the file, purge orphan data or switch the
 
 When the bake finishes, fails or is cancelled, the add-on restores the original slot materials, face material assignments, UV maps, selection, mode (also Edit Mode) and frame, every SimpleBake setting (saved under a temporary SimpleBake local preset `LCW_BBE_restore_<id>` and loaded back, plus the values SimpleBake's loader skips) and the SimpleBake preferences. Baked materials and textures stay. If loading the SimpleBake settings fails, the temporary preset is kept and named in the report, so you can load it in the SimpleBake panel.
 
-If SimpleBake stops inside a pass without finishing (an internal error), the add-on notices that Blender has not baked for 90 seconds, undoes SimpleBake's temporary changes (render engine, camera visibility, other add-ons' handlers, the working collection, Geometry Nodes copies), restores the original state and reports the failure. Pressing **Esc** during a bake is not supported: the pass may end with incomplete textures; bake again.
+If SimpleBake stops inside a pass without finishing (an internal error), the add-on notices that Blender has not baked for 90 seconds, undoes SimpleBake's temporary changes (render engine, camera and render visibility, other add-ons' handlers, the working collection, Geometry Nodes copies), restores the original state and reports the failure. Pressing **Esc** during a bake is not supported: the pass may end with incomplete textures; bake again.
 
 If LC Workflow is disabled during a bake, the add-on waits until SimpleBake stops and then restores everything. If another file is opened during a bake, only the SimpleBake preferences are restored.
 

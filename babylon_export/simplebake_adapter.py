@@ -174,7 +174,15 @@ def is_baking():
     return not bpy.ops.simplebake.bake_operation_pbr.poll()
 
 
-def recover_after_stall(scene):
+def is_busy():
+    """is_baking() that never raises (for validation)."""
+    try:
+        return is_baking()
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def recover_after_stall(scene, *, data=True):
     """Undo what SimpleBake's preparation left behind after its macro aborted.
 
     Only called once no Blender bake job has run for a long time while the
@@ -182,8 +190,10 @@ def recover_after_stall(scene):
     own finishing step for the parts that change the file or Blender: the
     flag, depsgraph handlers of all add-ons, render engine, camera ray
     visibility, the working collection and the Geometry Nodes proxy objects.
-    Slots, UVs and selection are restored by the job itself. Return a list of
-    parts that could not be restored.
+    Slots, UVs, selection and render visibility are restored by the job
+    itself. ``data=False`` (another file was loaded) only resets SimpleBake's
+    global state, never data of the new file. Return a list of parts that
+    could not be restored.
     """
     problems = []
     progress = _submodule('background_and_progress')
@@ -227,8 +237,16 @@ def recover_after_stall(scene):
             with _scene_context(scene):
                 bpy.ops.simplebake.reverse_geo_nodes_sidestep()
 
+    def isolation():
+        # Names SimpleBake would un-hide in its next run.
+        getattr(support, 'objects_hidden_for_isolation', []).clear()
+
     if prep is not None:
         attempt('add-on handlers', handlers)
+    attempt('isolation list', isolation)
+    if not data:
+        return problems
+    if prep is not None:
         attempt('render engine', engine)
         attempt('camera visibility', camera)
     attempt('working collection', working_collection)

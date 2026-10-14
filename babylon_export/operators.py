@@ -194,7 +194,7 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
         if active_job() is not job:
             # Abandoned (file load or add-on unregister); originals are handled there.
             return self._end(context, {'CANCELLED'})
-        # Esc is not handled here; SimpleBake's own Esc handling applies, so
+        # Esc is not handled here and SimpleBake does not handle it either;
         # the panel asks the user not to press it during a bake.
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}

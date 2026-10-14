@@ -131,7 +131,7 @@ class FakeAdapter:
     def bake_job_running(self):
         return self.bake_running
 
-    def recover_after_stall(self, scene):
+    def recover_after_stall(self, scene, *, data=True):
         self.stuck_cleared = True
         return []
 
@@ -316,6 +316,13 @@ try:
         assert any('SimpleBake_Working' in i.text for i in validation_module.validate(collection)
                    if i.level == 'ERROR')
         bpy.data.collections.remove(working)
+        real_busy = validation_module.simplebake_busy
+        validation_module.simplebake_busy = lambda: True  # the user's own SimpleBake bake runs
+        try:
+            assert any('already baking' in i.text for i in validation_module.validate(collection)
+                       if i.level == 'ERROR')
+        finally:
+            validation_module.simplebake_busy = real_busy
         mats['Rubber'].name = 'SBW_Rubber'
         assert any('SBW_' in i.text for i in validation_module.validate(collection) if i.level == 'ERROR')
         mats['Rubber'].name = 'Rubber'
@@ -413,6 +420,7 @@ try:
         adapter.bake_running = True  # a real bake is rendering: never a stall
         now[0] = 500.0
         assert job.step() == RUNNING and slot_names(door)[:2] == ['Wood_A', 'Wood_A']
+        glass.hide_render = True  # SimpleBake "isolate objects" hid the other meshes
         adapter.bake_running = False  # macro aborted, flag stuck
         assert job.step() == RUNNING  # idle timer starts
         now[0] = 520.0
@@ -420,6 +428,7 @@ try:
         now[0] = 531.0
         assert run(job) == FAILED and 'stopped during pass 1' in job.message, job.message
         assert adapter.stuck_cleared
+        assert not glass.hide_render, 'render visibility restored'
         assert_restored(door, before, sbp, sb_before, adapter)
         print('PASS babylon_bake_watchdog_restores_after_stall')
 
