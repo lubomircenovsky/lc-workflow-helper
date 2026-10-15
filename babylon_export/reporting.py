@@ -12,7 +12,7 @@ def store_outcome(state, collection, operation, outcome):
     state.last_outcome = outcome
     state.report_scene_collection = False
     try:
-        if collection is not None and collection.is_embedded_data:
+        if getattr(collection, 'is_embedded_data', False):
             state.report_collection = None
             state.report_scene_collection = True
         else:
@@ -22,8 +22,8 @@ def store_outcome(state, collection, operation, outcome):
 
 
 def _reported_target(state, collection):
-    if state.report_scene_collection:
-        return collection is not None and collection.is_embedded_data
+    if getattr(state, 'report_scene_collection', False):
+        return getattr(collection, 'is_embedded_data', False)
     return state.report_collection is not None and state.report_collection == collection
 
 
@@ -31,7 +31,7 @@ def last_operation_status(state, collection):
     if state.last_outcome == 'UNKNOWN' or state.last_operation == 'UNKNOWN':
         return 'idle', 'Last report \u2014 outcome unavailable'
     if not _reported_target(state, collection):
-        name = ('Scene Collection' if state.report_scene_collection else
+        name = ('Scene Collection' if getattr(state, 'report_scene_collection', False) else
                 state.report_collection.name if state.report_collection else 'collection unavailable')
         return 'info', f'Last report: {name}'
     operation = {
