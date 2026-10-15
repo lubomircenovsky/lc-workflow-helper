@@ -1,5 +1,6 @@
 import bpy
 from textwrap import wrap
+from ..icons import draw_header_icon
 from .settings import target_collection
 from .bake import active_job
 from .simplebake_adapter import settings_summary
@@ -23,6 +24,9 @@ class LCW_PT_babylon_export(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = 'LC Workflow'
     bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        draw_header_icon(self.layout, 'babylon_export')
 
     def draw(self, context):
         layout = self.layout

@@ -54,6 +54,7 @@ $IncludePaths = @(
     "cad_reconstruction",
     "babylon_export",
     "gn_library",
+    "icons",
     "docs",
     "operators",
     "ui",

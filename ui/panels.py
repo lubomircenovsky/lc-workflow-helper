@@ -4,6 +4,7 @@ import bpy
 from bpy.app.handlers import persistent
 
 from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
+from ..icons import category_icon, draw_header_icon
 from ..operators.gn_library import supported_version
 from ..quad_reconstruction.panels import (
     LCW_PT_quad_reconstruction,
@@ -474,6 +475,12 @@ class LCW_PT_base:
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
     bl_category = "LC Workflow"
+    # Category key for the header icon; None draws no icon (the root panel).
+    lcw_icon_key: str | None = None
+
+    def draw_header(self, context: bpy.types.Context) -> None:
+        if self.lcw_icon_key:
+            draw_header_icon(self.layout, self.lcw_icon_key)
 
 
 class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
@@ -491,7 +498,7 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
             ordered_keys = normalize_panel_order(file_state.panel_order)
             for index, panel_key in enumerate(ordered_keys):
                 row = section.row(align=True)
-                row.label(text=PANEL_LABELS[panel_key])
+                row.label(text=PANEL_LABELS[panel_key], **category_icon(panel_key))
 
                 move_up = row.row(align=True)
                 move_up.enabled = index > 0
@@ -508,6 +515,7 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_scene_info(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_scene_info"
+    lcw_icon_key = "scene_info"
     bl_label = "Scene Info"
     bl_parent_id = "LCW_PT_root"
 
@@ -536,6 +544,7 @@ class LCW_PT_scene_info(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_favorites(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_favorites"
+    lcw_icon_key = "favorites"
     bl_label = "Favorites"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -562,6 +571,7 @@ class LCW_PT_favorites(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_shape_keys(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_shape_keys"
+    lcw_icon_key = "shape_keys"
     bl_label = "Shape Keys"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -747,6 +757,7 @@ class LCW_PT_shape_keys(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_materials"
+    lcw_icon_key = "materials"
     bl_label = "Materials"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -807,6 +818,7 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_substance_designer_baker"
+    lcw_icon_key = "substance_designer_baker"
     bl_label = "Bakers"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1007,6 +1019,7 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_colors"
+    lcw_icon_key = "colors"
     bl_label = "Colors"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1087,6 +1100,7 @@ class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_uv"
+    lcw_icon_key = "uv"
     bl_label = "UV"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1203,6 +1217,7 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_mesh_utilities(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_mesh_utilities"
+    lcw_icon_key = "mesh_utilities"
     bl_label = "Object and Mesh Utilities"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1286,6 +1301,7 @@ class LCW_PT_mesh_utilities(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_workflow_presets"
+    lcw_icon_key = "workflow_presets"
     bl_label = "Workflow Presets"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1367,6 +1383,7 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_project_specific_tools(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_project_specific_tools"
+    lcw_icon_key = "project_specific_tools"
     bl_label = "Project specific tools"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
@@ -1377,6 +1394,7 @@ class LCW_PT_project_specific_tools(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_kalibra_tools(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_kalibra_tools"
+    lcw_icon_key = "kalibra_tools"
     bl_label = "Kalibra Tools"
     bl_parent_id = "LCW_PT_project_specific_tools"
     bl_order = 0
@@ -1524,6 +1542,7 @@ class LCW_PT_kalibra_tools(LCW_PT_base, bpy.types.Panel):
 
 class LCW_PT_gn_library(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_gn_library"
+    lcw_icon_key = "gn_library"
     bl_label = "GN Library"
     bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}

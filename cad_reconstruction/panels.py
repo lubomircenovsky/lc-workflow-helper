@@ -3,6 +3,7 @@ from __future__ import annotations
 import bpy
 
 from . import jobs, problem_select, protection, status_overlay, ui_text
+from ..icons import draw_header_icon
 
 
 def draw_uv_preparation(layout, context):
@@ -44,6 +45,9 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "LC Workflow"
     bl_options = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, context):
+        draw_header_icon(self.layout, "cad_reconstruction")
 
     def draw(self, context):
         layout = self.layout

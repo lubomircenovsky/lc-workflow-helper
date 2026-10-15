@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import bpy
 
+from ..icons import draw_header_icon
+
 
 def _section(layout, state, property_name: str, label: str, icon: str):
     row = layout.row(align=True)
@@ -51,6 +53,9 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "LC Workflow"
     bl_options = {"DEFAULT_CLOSED"}
+
+    def draw_header(self, context):
+        draw_header_icon(self.layout, "quad_reconstruction")
 
     def draw(self, context: bpy.types.Context) -> None:
         layout = self.layout
