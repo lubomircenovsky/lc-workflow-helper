@@ -3,7 +3,7 @@ from __future__ import annotations
 import bpy
 from bpy.app.handlers import persistent
 
-from ..constants import ACTION_MAP, PANEL_LABELS, normalize_panel_order
+from ..constants import ACTION_MAP, PANEL_LABELS, PANEL_SEPARATOR_KEYS, is_panel_separator, normalize_panel_order
 from ..icons import category_icon, draw_header_icon
 from ..operators.gn_library import supported_version
 from ..quad_reconstruction.panels import (
@@ -416,8 +416,14 @@ def _stored_panel_order(context: bpy.types.Context | None = None) -> tuple[str, 
 
 
 def _apply_panel_order() -> None:
-    for bl_order, panel_key in enumerate(_stored_panel_order(), start=1):
-        PANEL_CLASS_MAP[panel_key].bl_order = bl_order
+    order = _stored_panel_order()
+    for bl_order, panel_key in enumerate(order, start=1):
+        cls = SEPARATOR_CLASS_MAP.get(panel_key) or PANEL_CLASS_MAP[panel_key]
+        cls.bl_order = bl_order
+    # Unused separators stay registered but hidden (poll), so adding one never
+    # needs a new class.
+    for key, cls in SEPARATOR_CLASS_MAP.items():
+        cls.lcw_in_use = key in order
 
 
 def _tag_redraw() -> None:
@@ -497,9 +503,17 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
         if section:
             section.label(text="Use arrows to reorder categories in this .blend file.", icon="INFO")
             ordered_keys = normalize_panel_order(file_state.panel_order)
+            separators = {item.key: item for item in file_state.panel_separators}
             for index, panel_key in enumerate(ordered_keys):
                 row = section.row(align=True)
-                row.label(text=PANEL_LABELS[panel_key], **category_icon(panel_key))
+                if is_panel_separator(panel_key):
+                    item = separators.get(panel_key)
+                    if item is not None:
+                        row.prop(item, "title", text="", icon="REMOVE", placeholder="Separator name")
+                    else:
+                        row.label(text="Separator", icon="REMOVE")
+                else:
+                    row.label(text=PANEL_LABELS[panel_key], **category_icon(panel_key))
 
                 move_up = row.row(align=True)
                 move_up.enabled = index > 0
@@ -512,6 +526,11 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
                 operator = move_down.operator("lcw.main_panel_move", text="", icon="TRIA_DOWN")
                 operator.panel_key = panel_key
                 operator.direction = "DOWN"
+
+                if is_panel_separator(panel_key):
+                    operator = row.operator("lcw.main_panel_separator_remove", text="", icon="X")
+                    operator.panel_key = panel_key
+            section.operator("lcw.main_panel_separator_add", text="Add Separator", icon="ADD")
 
 
 class LCW_PT_scene_info(LCW_PT_base, bpy.types.Panel):
@@ -1590,6 +1609,43 @@ class LCW_PT_gn_library(LCW_PT_base, bpy.types.Panel):
                 box.label(text="Object in the modifier.")
 
 
+class LCW_PT_separator_base(LCW_PT_base):
+    """A header-less child of the root that draws a line and an optional group name."""
+
+    bl_parent_id = "LCW_PT_root"
+    bl_label = ""
+    bl_options = {"HIDE_HEADER"}
+    lcw_separator_key = ""
+    lcw_in_use = False
+
+    @classmethod
+    def poll(cls, context: bpy.types.Context) -> bool:
+        return cls.lcw_in_use
+
+    def draw(self, context: bpy.types.Context) -> None:
+        layout = self.layout
+        layout.separator(type="LINE")
+        file_state = getattr(context.scene, "lcw_scene_state", None)
+        title = next(
+            (item.title for item in getattr(file_state, "panel_separators", ()) if item.key == self.lcw_separator_key),
+            "",
+        )
+        if title:
+            row = layout.row()
+            row.active = False
+            row.label(text=title)
+
+
+SEPARATOR_CLASS_MAP = {
+    key: type(
+        f"LCW_PT_{key}",
+        (LCW_PT_separator_base, bpy.types.Panel),
+        {"bl_idname": f"LCW_PT_{key}", "lcw_separator_key": key},
+    )
+    for key in PANEL_SEPARATOR_KEYS
+}
+
+
 PANEL_CLASS_MAP = {
     "scene_info": LCW_PT_scene_info,
     "favorites": LCW_PT_favorites,
@@ -1626,4 +1682,5 @@ CLASSES = (
     LCW_PT_project_specific_tools,
     LCW_PT_kalibra_tools,
     LCW_PT_babylon_export,
+    *SEPARATOR_CLASS_MAP.values(),
 )

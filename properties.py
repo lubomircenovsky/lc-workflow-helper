@@ -79,6 +79,15 @@ class LCW_PG_FavoriteAction(bpy.types.PropertyGroup):
     action_id: StringProperty(name="Action ID", default="")
 
 
+class LCW_PG_PanelSeparator(bpy.types.PropertyGroup):
+    key: StringProperty(name="Separator Key", default="")
+    title: StringProperty(
+        name="Separator Title",
+        description="Optional group name shown under the separator line",
+        default="",
+    )
+
+
 class LCW_PG_BakerProfile(bpy.types.PropertyGroup):
     profile_id: StringProperty(name="Profile ID", default="")
     name: StringProperty(
@@ -900,6 +909,7 @@ class LCW_PG_SceneState(bpy.types.PropertyGroup):
     material_quick_name_2: StringProperty(name="Quick Name 2", default="")
     material_quick_name_3: StringProperty(name="Quick Name 3", default="")
     panel_order: StringProperty(name="Main Category Order", default=",".join(PANEL_ORDER_DEFAULT))
+    panel_separators: CollectionProperty(type=LCW_PG_PanelSeparator)
     uv_rebuild_seams_on_switch: BoolProperty(
         name="Rebuild Seams on UV Switch",
         description=(
@@ -1138,6 +1148,7 @@ CLASSES = (
     LCW_PG_WorkflowActionItem,
     LCW_PG_WorkflowPreset,
     LCW_PG_FavoriteAction,
+    LCW_PG_PanelSeparator,
     LCW_PG_BakerProfile,
     LCW_PG_SDBPreviewItem,
     LCW_PG_SubstanceDesignerBakeState,

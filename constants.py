@@ -308,6 +308,16 @@ PANEL_LABELS = {
 }
 
 
+# User-inserted separators between categories: a fixed pool of keys that live
+# in the same order string as the categories ("favorites,separator_1,uv,...").
+MAX_PANEL_SEPARATORS = 8
+PANEL_SEPARATOR_KEYS = tuple(f"separator_{index}" for index in range(1, MAX_PANEL_SEPARATORS + 1))
+
+
+def is_panel_separator(key: str) -> bool:
+    return key in PANEL_SEPARATOR_KEYS
+
+
 def normalize_panel_order(raw_value: str | Iterable[str] | None) -> tuple[str, ...]:
     if raw_value is None:
         ordered_keys: list[str] = []
@@ -321,6 +331,8 @@ def normalize_panel_order(raw_value: str | Iterable[str] | None) -> tuple[str, .
         if key in {"kalibra_tools", "babylon_export"}:
             key = "project_specific_tools"
         if key in PANEL_LABELS and (key != "project_specific_tools" or key not in filtered):
+            filtered.append(key)
+        elif is_panel_separator(key) and key not in filtered:
             filtered.append(key)
     for key in PANEL_ORDER_DEFAULT:
         if key not in filtered:
