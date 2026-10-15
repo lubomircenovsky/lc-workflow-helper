@@ -73,6 +73,42 @@ try:
         assert any(c[0] == 'label' and c[1].get('text') == label
                    and c[1].get('icon', c[1].get('icon_value')) == icons.category_icon(key).get('icon', icons.category_icon(key).get('icon_value'))
                    for c in calls), key
+
+    # Colored PNGs: every expected file exists and loads; built-ins remain the fallback.
+    expected = set(icons.CATEGORY_PNGS.values()) | {f'status_{s}' for s in icons.STATUS_ICONS}
+    on_disk = {p.stem for p in icons.PNG_DIR.glob('*.png')}
+    assert expected == on_disk, (expected ^ on_disk)
+    assert set(icons._previews.keys()) == expected
+    for name in expected:
+        assert tuple(icons._previews[name].icon_size) == (32, 32), name
+    # Background Blender assigns no icon ids (icon_id == 0), so the built-ins
+    # must take over there; in a GUI session the PNGs are used.
+    colored = not bpy.app.background
+    for key in icons.CATEGORY_PNGS:
+        assert ('icon_value' in icons.category_icon(key)) == colored, key
+    for status in icons.STATUS_ICONS:
+        assert ('icon_value' in icons.status_icon(status)) == colored, status
+    assert icons.category_icon('scene_info') == {'icon': 'INFO'}, 'no PNG -> built-in'
+    icons.set_colored(False)
+    assert icons.category_icon('materials') == {'icon': 'MATERIAL'}
+    assert icons.status_icon('error') == {'icon': 'CANCEL'}
+    icons.set_colored(True)
+    first = icons._previews
+    icons.register()  # idempotent: the previous collection is freed, not leaked
+    assert icons._previews is not first and set(icons._previews.keys()) == expected
+    # Reordering categories re-registers panel classes but must not reload PNGs.
+    collection = icons._previews
+    panels.refresh_panel_registration()
+    assert icons._previews is collection
+    print('PANEL_ICON_ASSETS_OK')
+finally:
+    addon.unregister()
+assert icons._previews is None
+assert icons.status_icon('ok') == {'icon': 'CHECKMARK'}, 'unregistered -> built-in fallback'
+# A second register/unregister cycle works (enable/disable twice).
+addon.register()
+try:
+    assert icons._previews is not None and 'status_ok' in icons._previews
 finally:
     addon.unregister()
 print('PASS blender_panel_icons')

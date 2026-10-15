@@ -3,6 +3,7 @@ from __future__ import annotations
 import bpy
 from bpy.props import BoolProperty, CollectionProperty, IntProperty, StringProperty
 
+from . import icons
 from .properties import LCW_PG_BakerProfile, LCW_PG_WorkflowPreset
 from .utils.substance_designer_baker import ensure_profile_ids, get_profile_by_index
 
@@ -24,9 +25,29 @@ def _sync_active_baker_profile(self, context: bpy.types.Context | None) -> None:
     bake_state.profile_id = profile.profile_id if profile is not None else ""
 
 
+def _update_colored_icons(self, context: bpy.types.Context | None) -> None:
+    icons.set_colored(self.use_colored_icons)
+    screen = getattr(context, "screen", None)
+    for area in getattr(screen, "areas", ()):
+        area.tag_redraw()
+
+
+def sync_icon_preference(context: bpy.types.Context) -> None:
+    """Apply the stored colored-icon choice after registration."""
+    addon = context.preferences.addons.get(__package__)
+    if addon is not None and addon.preferences is not None:
+        icons.set_colored(addon.preferences.use_colored_icons)
+
+
 class LCW_AddonPreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
+    use_colored_icons: BoolProperty(
+        name="Colored Panel Icons",
+        description="Use colored icons for N-panel categories and result states; off uses Blender's built-in icons",
+        default=True,
+        update=_update_colored_icons,
+    )
     presets: CollectionProperty(type=LCW_PG_WorkflowPreset)
     active_preset_index: IntProperty(name="Active Preset", default=0, min=0)
     baker_profiles: CollectionProperty(type=LCW_PG_BakerProfile)
@@ -66,6 +87,7 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
         layout = self.layout
         layout.label(text="Workflow presets and main category order are stored in each .blend file.")
         layout.label(text="Use the N-panel to create, edit, and run workflow presets.")
+        layout.prop(self, "use_colored_icons")
         box = layout.box()
         box.label(text="Bakers")
         box.prop(self, "substance_baker_executable")

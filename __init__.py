@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import bpy
 
-from . import babylon_export, cad_reconstruction, preferences, properties, quad_reconstruction
+from . import babylon_export, cad_reconstruction, icons, preferences, properties, quad_reconstruction
 from .operators import MODULES as OPERATOR_MODULES
 from .ui import MODULES as UI_MODULES
 
@@ -59,6 +59,7 @@ def _safe_unregister_classes(classes) -> None:
 
 def _cleanup_partial_registration() -> None:
     _unregister_handlers()
+    icons.unregister()
     babylon_export.unregister_properties()
     quad_reconstruction.unregister_properties()
     cad_reconstruction.unregister_properties()
@@ -78,6 +79,8 @@ def register() -> None:
         quad_reconstruction.register_properties()
         cad_reconstruction.register_properties()
         babylon_export.register_properties()
+        icons.register()
+        preferences.sync_icon_preference(bpy.context)
         _prepare_ui_register()
         for cls in _iter_ui_classes():
             bpy.utils.register_class(cls)
@@ -85,6 +88,7 @@ def register() -> None:
         _register_handlers()
     except Exception:
         _unregister_handlers()
+        icons.unregister()
         babylon_export.unregister_properties()
         quad_reconstruction.unregister_properties()
         cad_reconstruction.unregister_properties()
@@ -95,6 +99,7 @@ def register() -> None:
 
 def unregister() -> None:
     _unregister_handlers()
+    icons.unregister()
     babylon_export.unregister_properties()
     quad_reconstruction.unregister_properties()
     cad_reconstruction.unregister_properties()
