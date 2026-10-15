@@ -18,10 +18,10 @@ SCALE = 8  # supersampling factor for smooth edges
 S = SIZE * SCALE
 W = round(2.4 * SCALE)  # stroke width
 
-# Category families (contrast vs. the default panel background #303030 >= 5:1).
-GEOMETRY = "#68BFC6"
-SURFACE = "#E59AC0"
-WORKFLOW = "#B69AE3"
+# Categories are monochrome, close to Blender's own icon tone on the default
+# dark theme, so they read as part of the UI; only Favorites is gold.
+MONO = "#D4D4D4"
+GOLD = "#F2C14E"
 # Result statuses; shapes differ so color is never the only cue.
 OK = "#70CB89"
 WARNING = "#E5BE62"
@@ -75,6 +75,19 @@ def shape_keys(c):
     image, d = canvas()
     d.ellipse(p(4, 9, 20, 25), outline=c, width=W)
     d.ellipse(p(12, 5, 28, 21), outline=c, width=W)
+    return image
+
+
+def favorites(c):
+    import math
+    image, d = canvas()
+    points = []
+    for i in range(10):
+        r = 13 if i % 2 == 0 else 5.6
+        a = math.radians(-90 + i * 36)
+        points.append((16 + r * math.cos(a)) * SCALE)
+        points.append((17 + r * math.sin(a)) * SCALE)
+    d.polygon(points, fill=c)
     return image
 
 
@@ -234,19 +247,20 @@ def cancelled(c):
 
 
 ICONS = {
-    "category_shape_keys": (shape_keys, GEOMETRY),
-    "category_mesh": (mesh, GEOMETRY),
-    "category_quad": (quad, GEOMETRY),
-    "category_cad": (cad, GEOMETRY),
-    "category_gn": (gn, GEOMETRY),
-    "category_materials": (materials, SURFACE),
-    "category_colors": (colors, SURFACE),
-    "category_uv": (uv, SURFACE),
-    "category_bakers": (bakers, WORKFLOW),
-    "category_presets": (presets, WORKFLOW),
-    "category_project": (project, WORKFLOW),
-    "category_kalibra": (kalibra, WORKFLOW),
-    "category_babylon": (babylon, WORKFLOW),
+    "category_favorites": (favorites, GOLD),
+    "category_shape_keys": (shape_keys, MONO),
+    "category_mesh": (mesh, MONO),
+    "category_quad": (quad, MONO),
+    "category_cad": (cad, MONO),
+    "category_gn": (gn, MONO),
+    "category_materials": (materials, MONO),
+    "category_colors": (colors, MONO),
+    "category_uv": (uv, MONO),
+    "category_bakers": (bakers, MONO),
+    "category_presets": (presets, MONO),
+    "category_project": (project, MONO),
+    "category_kalibra": (kalibra, MONO),
+    "category_babylon": (babylon, MONO),
     "status_ok": (ok, OK),
     "status_warning": (warning, WARNING),
     "status_error": (error, ERROR),

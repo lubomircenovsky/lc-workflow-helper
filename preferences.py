@@ -44,7 +44,7 @@ class LCW_AddonPreferences(bpy.types.AddonPreferences):
 
     use_colored_icons: BoolProperty(
         name="Colored Panel Icons",
-        description="Use colored icons for N-panel categories and result states; off uses Blender's built-in icons",
+        description="Use the add-on's own icons (gold Favorites star, colored result states); off uses Blender's built-in icons",
         default=True,
         update=_update_colored_icons,
     )
