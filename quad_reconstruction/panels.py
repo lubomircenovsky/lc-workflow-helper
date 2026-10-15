@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import bpy
 
-from ..icons import draw_header_icon
+from ..icons import draw_header_icon, status_icon
+from . import ui_status
 
 
 def _section(layout, state, property_name: str, label: str, icon: str):
@@ -35,8 +36,10 @@ class LCW_UL_quad_analysis_results(bpy.types.UIList):
         flt_flag=0,
     ):
         row = layout.row(align=True)
-        status_icon = "CHECKMARK" if item.fingerprint_unchanged else "ERROR"
-        row.label(text=item.source_object_name, icon=status_icon)
+        # Severity of the whole result, not only source integrity (see ui_status).
+        result = ui_status.result_status(item, item.output_object is not None)
+        row.label(text=item.source_object_name, **status_icon(result.kind))
+        row.label(text=result.short)
         row.label(text=item.classification.replace("_", " ").title())
         row.label(text=f"T {item.triangle_count} / Q {item.quad_count}")
         if item.status == "RECONSTRUCTED":
@@ -140,6 +143,7 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
                     grid.prop(state, property_name)
             advanced.prop(state, "debug_logging")
 
+        layout.separator(type="LINE")
         action_box = layout.box()
         row = action_box.row(align=True)
         if state.active_run_id:
@@ -149,6 +153,8 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
                 icon="CANCEL",
             )
         else:
+            # Only the primary Analyze/Reconstruct row is enlarged; Cancel stays normal.
+            row.scale_y = 1.3
             row.operator(
                 "lcw.quad_reconstruction_analyze_modal",
                 text="Analyze",
@@ -167,7 +173,8 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
             text=state.progress_label or f"{state.progress:.0%}",
             type="BAR",
         )
-        action_box.label(text=f"Status: {state.job_status.replace('_', ' ').title()}")
+        batch_kind, batch_text = ui_status.batch_status(state.job_status)
+        action_box.label(text=f"Status: {batch_text}", **status_icon(batch_kind))
         if state.job_message:
             action_box.label(text=state.job_message, icon="INFO")
         if state.last_report_text_name:
@@ -195,26 +202,29 @@ class LCW_PT_quad_reconstruction(bpy.types.Panel):
             index = min(state.active_result_index, len(state.results) - 1)
             item = state.results[index]
             details = results.box()
+            result = ui_status.result_status(item, item.output_object is not None)
             details.label(text=item.source_mesh_name, icon="MESH_DATA")
+            details.label(text=result.text, **status_icon(result.kind))
             details.label(text=item.details)
+            # Confirms only that the source mesh was not modified, not result quality.
             details.label(
-                text="Source fingerprint unchanged"
+                text="Source unchanged"
                 if item.fingerprint_unchanged
                 else "Source fingerprint verification failed",
-                icon="CHECKMARK" if item.fingerprint_unchanged else "ERROR",
+                **status_icon("ok" if item.fingerprint_unchanged else "error"),
             )
             details.label(text=f"Runtime: {item.runtime_seconds:.4f} s")
             if item.output_object is not None:
+                details.separator(type="LINE")
                 details.label(text=f"Output: {item.output_object.name}", icon="OBJECT_DATA")
                 details.label(text=f"Coverage: {item.coverage:.1%}")
-                solver_icon = "CHECKMARK" if item.solver_exact else "INFO"
                 details.label(
                     text=f"Solver: {item.solver_backend} ({'exact' if item.solver_exact else 'fallback'})",
-                    icon=solver_icon,
+                    **status_icon("info" if item.solver_exact else "warning"),
                 )
                 details.label(
                     text=f"Confidence: {item.confidence_label} ({item.confidence_score:.1f}/100)",
-                    icon="SOLO_ON" if item.confidence_label == "HIGH" else "INFO",
+                    **status_icon("info" if item.confidence_label == "HIGH" else "warning"),
                 )
                 details.label(text=f"Relaxations: {item.relaxation_count}")
                 row = details.row(align=True)

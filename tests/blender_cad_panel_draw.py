@@ -7,6 +7,7 @@ import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import LC_workflow_addon as addon
+from LC_workflow_addon.icons import status_icon
 from LC_workflow_addon.cad_reconstruction.panels import LCW_PT_cad_reconstruction, draw_uv_preparation
 
 
@@ -49,6 +50,14 @@ class Layout:
         self._icon(kwargs)
         self.calls.append(('prop', name, self.path, kwargs))
 
+    def separator(self, **kwargs):
+        params = bpy.types.UILayout.bl_rna.functions['separator'].parameters
+        for key, value in kwargs.items():
+            assert key in params, ('separator', key)
+            if params[key].type == 'ENUM':
+                assert value in {item.identifier for item in params[key].enum_items}, ('separator', key, value)
+        self.calls.append(('separator', kwargs.get('type', 'AUTO'), self.path, kwargs))
+
     def label(self, **kwargs):
         self._icon(kwargs)
         self.calls.append(('label', kwargs.get('text', ''), self.path, kwargs))
@@ -57,7 +66,8 @@ class Layout:
         self._icon(kwargs)
         namespace, operator = name.split('.')
         rna = getattr(getattr(bpy.ops, namespace), operator).get_rna_type()
-        self.calls.append(('operator', name, self.path, kwargs))
+        # 5th item: scale_y of the layout the operator sits in (primary-action size).
+        self.calls.append(('operator', name, self.path, kwargs, getattr(self, 'scale_y', 1.0)))
         return OperatorProperties(rna)
 
 
@@ -144,6 +154,82 @@ try:
     assert {'uv_prep_map_name', 'uv_prep_margin', 'uv_prep_angle_degrees'} <= {c[1] for c in calls if c[0] == 'prop'}
     assert any(c[:2] == ('operator', 'lcw.cad_prepare_uv') for c in calls)
     print('CAD_PANEL_PRIMARY_ACTION_AND_UV_PREP_OK')
+
+    def draw(layout_calls):
+        with bpy.context.temp_override(area=area):
+            LCW_PT_cad_reconstruction.draw(SimpleNamespace(layout=Layout(layout_calls, icons)), bpy.context)
+
+    def label_icon(layout_calls, text):
+        return {key: value for key, value in next(
+            c for c in layout_calls if c[0] == 'label' and c[1] == text)[3].items() if key != 'text'}
+
+    # Phase 2 orientation: section headings and the line before Results.
+    state.analysis_running = False
+    for mode in ('AUTO', 'POWER_USER'):
+        state.workflow_mode = mode
+        calls = []
+        draw(calls)
+        texts = [c[1] for c in calls if c[0] == 'label']
+        assert ('Objective & Limits' in texts) == (mode == 'AUTO'), (mode, texts)
+        run_index = next(i for i, c in enumerate(calls) if c[:2] == ('label', 'Run'))
+        assert calls[run_index][3].get('icon') == 'PLAY'
+        line_index = next(i for i, c in enumerate(calls) if c[:2] == ('separator', 'LINE'))
+        results_index = next(i for i, c in enumerate(calls) if c[:2] == ('label', 'Results'))
+        assert run_index < line_index < results_index, (run_index, line_index, results_index)
+        if mode == 'AUTO':
+            assert label_icon(calls, 'Objective & Limits') == {'icon': 'PREFERENCES'}
+        reconstruct = next(c for c in calls if c[:2] == ('operator', 'lcw.cad_reconstruct'))
+        assert reconstruct[4] == 1.3, reconstruct
+    print('CAD_PANEL_SECTION_HEADINGS_OK')
+
+    # Phase 4 severity: each result status maps to its own status icon.
+    state.workflow_mode = 'POWER_USER'
+    state.results_section_open = True
+    state.results_visible = max(state.results_visible, 10)
+    state.results.clear()
+    expected = {}
+    for status, partial, kind, text in (
+            ('PENDING', False, 'idle', 'PENDING'),
+            ('RUNNING', False, 'running', 'RUNNING'),
+            ('PASS', False, 'ok', 'PASS'),
+            ('REVIEW', False, 'warning', 'REVIEW'),
+            ('REVIEW', True, 'warning', 'PARTIAL / REVIEW'),
+            ('FAIL', False, 'error', 'FAIL'),
+            ('', False, 'idle', 'Unknown status')):
+        result = state.results.add()
+        result.source = source
+        result.source_label = f'Cube {status or "blank"} {partial}'
+        result.status = status
+        result.partial = partial
+        result.details_open = True
+        result.reason = 'Skipped region.'
+        expected[f'{result.source_label}: {text}'] = kind
+    # Analysis lines: blocker is an error in words and icon, a note is info.
+    state.analysis_lines.clear()
+    for severity, message in (('BLOCKER', 'Cube: Repair mesh first.'), ('NOTE', 'Cube: Negative scale.')):
+        line = state.analysis_lines.add()
+        line.source = source
+        line.severity = severity
+        line.message = message
+    for blockers in (0, 1):
+        state.analysis_ready = True
+        state.analysis_blockers = blockers
+        calls = []
+        draw(calls)
+        for text, kind in expected.items():
+            assert label_icon(calls, text) == status_icon(kind), (text, kind)
+        assert label_icon(calls, 'BLOCKER: Cube: Repair mesh first.') == status_icon('error')
+        assert label_icon(calls, 'Cube: Negative scale.') == status_icon('info')
+        summary = next(c for c in calls if c[0] == 'label' and ' blocked | ' in c[1])
+        assert {k: v for k, v in summary[3].items() if k != 'text'} == status_icon('error' if blockers else 'ok')
+    print('CAD_PANEL_RESULT_SEVERITY_OK')
+
+    calls = []
+    with bpy.context.temp_override(area=area):
+        draw_uv_preparation(Layout(calls, icons), bpy.context)
+    assert all(c[4] == 1.15 for c in calls if c[:2] in {('operator', 'lcw.cad_analyze_uv'),
+                                                         ('operator', 'lcw.cad_prepare_uv')}), calls
+    assert any(c[:2] == ('operator', 'lcw.cad_analyze_uv') for c in calls)
 finally:
     addon.unregister()
 print('PASS blender_cad_panel_draw')

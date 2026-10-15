@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import bpy
 
-from . import jobs, problem_select, protection, status_overlay, ui_text
-from ..icons import draw_header_icon
+from . import jobs, problem_select, protection, status_overlay, ui_status, ui_text
+from ..icons import draw_header_icon, status_icon
 
 
 def draw_uv_preparation(layout, context):
@@ -19,6 +19,7 @@ def draw_uv_preparation(layout, context):
     settings.prop(state, "uv_prep_margin")
     settings.prop(state, "uv_prep_angle_degrees")
     actions = settings.row(align=True)
+    actions.scale_y = 1.15
     actions.operator("lcw.cad_analyze_uv", text="Analyze", icon="VIEWZOOM")
     actions.operator("lcw.cad_prepare_uv", text="Generate UV", icon="GROUP_UVS")
     for line in ui_text.lines(state.uv_prep_summary):
@@ -93,6 +94,7 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
 
         if auto:
             box = layout.box()
+            box.label(text="Objective & Limits", icon="PREFERENCES")
             controls = box.column(align=True)
             controls.enabled = not busy
             controls.row(align=True).prop(state, "auto_objective", expand=True)
@@ -145,6 +147,7 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
 
         # The primary action is always visible: collapsing settings never hides Run.
         action_box = layout.box()
+        action_box.label(text="Run", icon="PLAY")
         row = action_box.row(align=True)
         row.scale_y = 1.3
         row.enabled = not busy
@@ -180,18 +183,19 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
             analysis = layout.box()
             analysis.label(text="Last Analysis", icon="VIEWZOOM")
             if state.analysis_running:
-                analysis.label(text="Checking geometry and screening profiles...", icon="TIME")
+                analysis.label(text="Checking geometry and screening profiles...", **status_icon("running"))
             else:
                 mesh_label = "mesh" if state.analysis_meshes == 1 else "meshes"
                 analysis.label(text=f"{state.analysis_meshes} {mesh_label} | {state.analysis_blockers} blocked | "
                                     f"{state.analysis_notes} notes",
-                               icon="ERROR" if state.analysis_blockers else "CHECKMARK")
+                               **status_icon(ui_status.analysis_summary_status(state.analysis_blockers)))
                 count = len(state.analysis_lines)
                 visible = count if state.analysis_details_open else min(count, 3)
                 for index in range(visible):
                     item = state.analysis_lines[index]
-                    for line in ui_text.lines(item.message):
-                        analysis.label(text=line, icon="ERROR" if item.severity == "BLOCKER" else "INFO")
+                    line_status = status_icon(ui_status.analysis_line_status(item.severity))
+                    for line in ui_text.lines(ui_status.analysis_line_text(item.severity, item.message)):
+                        analysis.label(text=line, **line_status)
                     if item.recommendation:
                         action = analysis.row()
                         action.enabled = not busy
@@ -202,6 +206,7 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                     analysis.prop(state, "analysis_details_open", text="Show all notes" if not state.analysis_details_open
                                   else "Hide extra notes", toggle=True)
 
+        layout.separator(type="LINE")
         box = layout.box()
         header = box.row(align=True)
         header.prop(state, "results_section_open", text="", emboss=False,
@@ -228,12 +233,12 @@ class LCW_PT_cad_reconstruction(bpy.types.Panel):
                            max(-1, len(state.results) - state.results_visible - 1), -1):
             item = state.results[index]
             result_box = box.box()
-            icon = "CHECKMARK" if item.status == "PASS" else "ERROR" if item.status == "FAIL" else "INFO"
-            display_status = "PARTIAL / REVIEW" if item.partial and item.status == "REVIEW" else item.status
+            status_kind, display_status = ui_status.result_status(item.status, item.partial)
             header = result_box.row(align=True)
             header.prop(item, "details_open", text="", emboss=False,
                         icon="TRIA_DOWN" if item.details_open else "TRIA_RIGHT")
-            header.label(text=f"{item.source_label or (item.source.name if item.source else 'Missing source')}: {display_status}", icon=icon)
+            header.label(text=f"{item.source_label or (item.source.name if item.source else 'Missing source')}: {display_status}",
+                         **status_icon(status_kind))
             for line in ui_text.lines(ui_text.result_brief(item)):
                 result_box.label(text=line)
             if item.metrics_summary and item.status in {"PASS", "REVIEW"}:
