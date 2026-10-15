@@ -12,7 +12,6 @@ from typing import NamedTuple
 class ResultStatus(NamedTuple):
     kind: str  # ok / warning / error / info / idle
     text: str  # full text for the details box
-    short: str  # one word or two for the UIList row
 
 
 def review_reasons(item) -> list[str]:
@@ -36,29 +35,25 @@ def result_status(item, output_available: bool) -> ResultStatus:
     status = item.status
     if status == "FAILED":
         text = f"FAILED: {item.details}" if item.details else "FAILED"
-        return ResultStatus("error", text, "Failed")
+        return ResultStatus("error", text)
     if status in {"ANALYZED", "RECONSTRUCTED"} and not item.fingerprint_unchanged:
-        return ResultStatus("error", "Source integrity check failed", "Source changed")
+        return ResultStatus("error", "Source integrity check failed")
     if status == "ANALYZED":
         if item.warning_count > 0:
-            return ResultStatus(
-                "warning", f"ANALYZED: {item.warning_count} warning(s)", "Warnings"
-            )
+            return ResultStatus("warning", f"ANALYZED: {item.warning_count} warning(s)")
         classification = item.classification.replace("_", " ").title()
         text = f"ANALYZED: {classification}" if classification else "ANALYZED"
-        return ResultStatus("info", text, "Analyzed")
+        return ResultStatus("info", text)
     if status == "RECONSTRUCTED":
         if not item.validation_passed:
-            return ResultStatus("error", "Validation failed", "Invalid")
+            return ResultStatus("error", "Validation failed")
         if not output_available:
-            return ResultStatus(
-                "warning", "Output unavailable: last result retained", "No output"
-            )
+            return ResultStatus("warning", "Output unavailable: last result retained")
         reasons = review_reasons(item)
         if reasons:
-            return ResultStatus("warning", f"Validated, review: {', '.join(reasons)}", "Review")
-        return ResultStatus("ok", "Validated", "Validated")
-    return ResultStatus("idle", "Result unavailable", "Unknown")
+            return ResultStatus("warning", f"Validated, review: {', '.join(reasons)}")
+        return ResultStatus("ok", "Validated")
+    return ResultStatus("idle", "Result unavailable")
 
 
 # job_status -> (status kind, text). A finished batch stays "info", never "ok":

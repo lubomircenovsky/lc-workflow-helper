@@ -38,8 +38,9 @@ class LCW_UL_quad_analysis_results(bpy.types.UIList):
         row = layout.row(align=True)
         # Severity of the whole result, not only source integrity (see ui_status).
         result = ui_status.result_status(item, item.output_object is not None)
+        # The icon shape states the severity; its text is in the details box
+        # (a separate column truncated object names in the narrow sidebar).
         row.label(text=item.source_object_name, **status_icon(result.kind))
-        row.label(text=result.short)
         row.label(text=item.classification.replace("_", " ").title())
         row.label(text=f"T {item.triangle_count} / Q {item.quad_count}")
         if item.status == "RECONSTRUCTED":
