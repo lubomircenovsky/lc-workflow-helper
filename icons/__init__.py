@@ -21,8 +21,7 @@ import bpy.utils.previews
 
 PNG_DIR = Path(__file__).resolve().parent / "png"
 
-# Built-in icon per LC Workflow category; keys follow constants.PANEL_LABELS
-# plus the two panels nested under "Project specific tools".
+# Built-in icon per LC Workflow category; keys follow constants.PANEL_LABELS.
 CATEGORY_ICONS = {
     "scene_info": "INFO",
     "favorites": "SOLO_ON",
@@ -36,7 +35,6 @@ CATEGORY_ICONS = {
     "cad_reconstruction": "MOD_REMESH",
     "gn_library": "GEOMETRY_NODES",
     "workflow_presets": "PRESET",
-    "project_specific_tools": "TOOL_SETTINGS",
     "kalibra_tools": "SHADING_BBOX",
     "babylon_export": "EXPORT",
 }
@@ -55,7 +53,6 @@ CATEGORY_PNGS = {
     "uv": "category_uv",
     "substance_designer_baker": "category_bakers",
     "workflow_presets": "category_presets",
-    "project_specific_tools": "category_project",
     "kalibra_tools": "category_kalibra",
     "babylon_export": "category_babylon",
 }

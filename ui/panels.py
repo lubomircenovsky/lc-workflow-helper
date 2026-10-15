@@ -3,7 +3,14 @@ from __future__ import annotations
 import bpy
 from bpy.app.handlers import persistent
 
-from ..constants import ACTION_MAP, PANEL_LABELS, PANEL_SEPARATOR_KEYS, is_panel_separator, normalize_panel_order
+from ..constants import (
+    ACTION_MAP,
+    DEFAULT_SEPARATOR_TITLES,
+    PANEL_LABELS,
+    PANEL_SEPARATOR_KEYS,
+    is_panel_separator,
+    normalize_panel_order,
+)
 from ..icons import category_icon, draw_header_icon
 from ..operators.gn_library import supported_version
 from ..quad_reconstruction.panels import (
@@ -511,7 +518,7 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
                     if item is not None:
                         row.prop(item, "title", text="", icon="REMOVE", placeholder="Separator name")
                     else:
-                        row.label(text="Separator", icon="REMOVE")
+                        row.label(text=DEFAULT_SEPARATOR_TITLES.get(panel_key, "Separator"), icon="REMOVE")
                 else:
                     row.label(text=PANEL_LABELS[panel_key], **category_icon(panel_key))
 
@@ -530,7 +537,9 @@ class LCW_PT_root(LCW_PT_base, bpy.types.Panel):
                 if is_panel_separator(panel_key):
                     operator = row.operator("lcw.main_panel_separator_remove", text="", icon="X")
                     operator.panel_key = panel_key
-            section.operator("lcw.main_panel_separator_add", text="Add Separator", icon="ADD")
+            row = section.row(align=True)
+            row.operator("lcw.main_panel_separator_add", text="Add Separator", icon="ADD")
+            row.operator("lcw.main_panel_reset_layout", text="Reset to Default", icon="LOOP_BACK")
 
 
 class LCW_PT_scene_info(LCW_PT_base, bpy.types.Panel):
@@ -1416,23 +1425,11 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
             _draw_preset_action_settings(box, action)
 
 
-class LCW_PT_project_specific_tools(LCW_PT_base, bpy.types.Panel):
-    bl_idname = "LCW_PT_project_specific_tools"
-    lcw_icon_key = "project_specific_tools"
-    bl_label = "Project specific tools"
-    bl_parent_id = "LCW_PT_root"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    def draw(self, context: bpy.types.Context) -> None:
-        pass
-
-
 class LCW_PT_kalibra_tools(LCW_PT_base, bpy.types.Panel):
     bl_idname = "LCW_PT_kalibra_tools"
     lcw_icon_key = "kalibra_tools"
     bl_label = "Kalibra Tools"
-    bl_parent_id = "LCW_PT_project_specific_tools"
-    bl_order = 0
+    bl_parent_id = "LCW_PT_root"
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw(self, context: bpy.types.Context) -> None:
@@ -1626,10 +1623,11 @@ class LCW_PT_separator_base(LCW_PT_base):
         layout = self.layout
         layout.separator(type="LINE")
         file_state = getattr(context.scene, "lcw_scene_state", None)
-        title = next(
-            (item.title for item in getattr(file_state, "panel_separators", ()) if item.key == self.lcw_separator_key),
-            "",
+        item = next(
+            (item for item in getattr(file_state, "panel_separators", ()) if item.key == self.lcw_separator_key),
+            None,
         )
+        title = item.title if item is not None else DEFAULT_SEPARATOR_TITLES.get(self.lcw_separator_key, "")
         if title:
             row = layout.row()
             row.active = False
@@ -1659,7 +1657,8 @@ PANEL_CLASS_MAP = {
     "cad_reconstruction": LCW_PT_cad_reconstruction,
     "gn_library": LCW_PT_gn_library,
     "workflow_presets": LCW_PT_workflow_presets,
-    "project_specific_tools": LCW_PT_project_specific_tools,
+    "kalibra_tools": LCW_PT_kalibra_tools,
+    "babylon_export": LCW_PT_babylon_export,
 }
 
 
@@ -1679,7 +1678,6 @@ CLASSES = (
     LCW_PT_cad_reconstruction,
     LCW_PT_gn_library,
     LCW_PT_workflow_presets,
-    LCW_PT_project_specific_tools,
     LCW_PT_kalibra_tools,
     LCW_PT_babylon_export,
     *SEPARATOR_CLASS_MAP.values(),

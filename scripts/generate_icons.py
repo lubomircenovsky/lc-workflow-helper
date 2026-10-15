@@ -166,12 +166,6 @@ def presets(c):
     return image
 
 
-def project(c):
-    image, d = canvas()
-    line(d, c, 4, 9, 12, 9, 15, 12, 28, 12, 28, 26, 4, 26, 4, 9)
-    return image
-
-
 def kalibra(c):
     image, d = canvas()
     line(d, c, 5, 10, 21, 10, 21, 27, 5, 27, 5, 10)
@@ -258,7 +252,6 @@ ICONS = {
     "category_uv": (uv, MONO),
     "category_bakers": (bakers, MONO),
     "category_presets": (presets, MONO),
-    "category_project": (project, MONO),
     "category_kalibra": (kalibra, MONO),
     "category_babylon": (babylon, MONO),
     "status_ok": (ok, OK),

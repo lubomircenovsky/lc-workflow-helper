@@ -2,9 +2,26 @@ from __future__ import annotations
 
 import bpy
 
-from ..constants import PANEL_LABELS, PANEL_SEPARATOR_KEYS, is_panel_separator, normalize_panel_order
+from ..constants import (
+    DEFAULT_SEPARATOR_TITLES,
+    PANEL_LABELS,
+    PANEL_ORDER_DEFAULT,
+    PANEL_SEPARATOR_KEYS,
+    is_panel_separator,
+    normalize_panel_order,
+)
 from ..ui import panels
 from ..utils.common import scene_state
+
+
+def ensure_separator_items(file_state) -> None:
+    """Give every separator in the order a name entry (default name if any)."""
+    existing = {item.key for item in file_state.panel_separators}
+    for key in normalize_panel_order(file_state.panel_order):
+        if is_panel_separator(key) and key not in existing:
+            item = file_state.panel_separators.add()
+            item.key = key
+            item.title = DEFAULT_SEPARATOR_TITLES.get(key, "")
 
 
 class LCW_OT_main_panel_move(bpy.types.Operator):
@@ -90,4 +107,28 @@ class LCW_OT_main_panel_separator_remove(bpy.types.Operator):
         return {"FINISHED"}
 
 
-CLASSES = (LCW_OT_main_panel_move, LCW_OT_main_panel_separator_add, LCW_OT_main_panel_separator_remove)
+class LCW_OT_main_panel_reset_layout(bpy.types.Operator):
+    bl_idname = "lcw.main_panel_reset_layout"
+    bl_label = "Reset to Default Layout"
+    bl_description = "Restore the default category order and separators in this .blend file"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context: bpy.types.Context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context: bpy.types.Context):
+        file_state = scene_state(context)
+        file_state.panel_order = ",".join(PANEL_ORDER_DEFAULT)
+        file_state.panel_separators.clear()
+        ensure_separator_items(file_state)
+        panels.refresh_panel_registration()
+        self.report({"INFO"}, "Restored the default category layout.")
+        return {"FINISHED"}
+
+
+CLASSES = (
+    LCW_OT_main_panel_move,
+    LCW_OT_main_panel_separator_add,
+    LCW_OT_main_panel_separator_remove,
+    LCW_OT_main_panel_reset_layout,
+)

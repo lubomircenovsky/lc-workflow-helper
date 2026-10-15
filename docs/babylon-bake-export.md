@@ -1,6 +1,6 @@
 # Babylon Bake & Export
 
-Bakes the materials of a collection with SimpleBake, builds glTF-ready `*_baked` materials and exports the collection as a GLB with every glTF material variant. Find it in the N-panel: **LC Workflow → Project specific tools → Babylon Bake & Export**.
+Bakes the materials of a collection with SimpleBake, builds glTF-ready `*_baked` materials and exports the collection as a GLB with every glTF material variant. Find it in the N-panel: **LC Workflow → Babylon Bake & Export** (in the default layout under the "Project specific tools" separator).
 
 ## Requirements
 

@@ -26,6 +26,7 @@ The extension provides:
 - file path inputs instead of hardcoded export paths
 - deterministic batch quad reconstruction for triangulated and mixed meshes
 - bundled Geometry Nodes groups that can be appended to the current `.blend` file
+- a category layout per `.blend` file: Main Category Order reorders categories, adds named separators and resets to the default grouping (General tools, Specialized tools, Project specific tools, ETC)
 
 The GN Library initially includes `GN_Screw_Replace_By_Geometry`. The source collection and replacement object are assigned in the Geometry Nodes modifier after insertion.
 
@@ -104,7 +105,7 @@ Details, guarantees and limits: `docs/cad-mesh-reconstruction.md`.
 
 ## Babylon Bake & Export
 
-Under **Project specific tools**: bakes a collection's materials with the optional SimpleBake add-on (default state and every glTF material variant), builds glTF-ready `*_baked` materials and exports the collection as a GLB through its glTF Collection Exporter, with one UV map, no Draco and all variants. Unticked materials export unchanged. The user's materials, UVs, face assignments and SimpleBake settings are always restored. Workflow and safety checks: `docs/babylon-bake-export.md`.
+In the default layout under the **Project specific tools** separator: bakes a collection's materials with the optional SimpleBake add-on (default state and every glTF material variant), builds glTF-ready `*_baked` materials and exports the collection as a GLB through its glTF Collection Exporter, with one UV map, no Draco and all variants. Unticked materials export unchanged. The user's materials, UVs, face assignments and SimpleBake settings are always restored. Workflow and safety checks: `docs/babylon-bake-export.md`.
 
 ## Validation Status
 

@@ -58,8 +58,8 @@ try:
     # Status shapes must differ: meaning never rests on color alone.
     assert len(set(icons.STATUS_ICONS.values())) == len(icons.STATUS_ICONS)
 
-    nested = {'kalibra_tools': panels.LCW_PT_kalibra_tools, 'babylon_export': panels.LCW_PT_babylon_export}
-    for key, panel_cls in {**panels.PANEL_CLASS_MAP, **nested}.items():
+    assert set(panels.PANEL_CLASS_MAP) == set(PANEL_LABELS)
+    for key, panel_cls in panels.PANEL_CLASS_MAP.items():
         calls = header_calls(panel_cls)
         assert len(calls) == 1 and calls[0][1].get('text') == '', (key, calls)
         assert calls[0][1] == {'text': '', **icons.category_icon(key)}, (key, calls)

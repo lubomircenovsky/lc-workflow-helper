@@ -275,22 +275,6 @@ SDB_EXPORT_SOURCE_ITEMS = (
     ("COLLECTION_EXPORTER", "Collection Exporter", "Use the first configured FBX exporter on the collection"),
 )
 
-PANEL_ORDER_DEFAULT = (
-    "scene_info",
-    "favorites",
-    "shape_keys",
-    "materials",
-    "substance_designer_baker",
-    "colors",
-    "uv",
-    "mesh_utilities",
-    "quad_reconstruction",
-    "cad_reconstruction",
-    "gn_library",
-    "workflow_presets",
-    "project_specific_tools",
-)
-
 PANEL_LABELS = {
     "scene_info": "Scene Info",
     "favorites": "Favorites",
@@ -304,7 +288,8 @@ PANEL_LABELS = {
     "cad_reconstruction": "CAD Mesh Reconstruction",
     "gn_library": "GN Library",
     "workflow_presets": "Workflow Presets",
-    "project_specific_tools": "Project specific tools",
+    "kalibra_tools": "Kalibra Tools",
+    "babylon_export": "Babylon Bake & Export",
 }
 
 
@@ -313,6 +298,43 @@ PANEL_LABELS = {
 MAX_PANEL_SEPARATORS = 8
 PANEL_SEPARATOR_KEYS = tuple(f"separator_{index}" for index in range(1, MAX_PANEL_SEPARATORS + 1))
 
+# Default layout of a new file (and of "Reset to Default Layout"): categories
+# grouped by named separators.
+PANEL_ORDER_DEFAULT = (
+    "scene_info",
+    "favorites",
+    "separator_1",
+    "mesh_utilities",
+    "shape_keys",
+    "materials",
+    "colors",
+    "uv",
+    "separator_2",
+    "substance_designer_baker",
+    "quad_reconstruction",
+    "cad_reconstruction",
+    "separator_3",
+    "kalibra_tools",
+    "babylon_export",
+    "separator_4",
+    "workflow_presets",
+    "gn_library",
+)
+
+# Group names of the default separators; a separator without a stored name in
+# the file shows this one.
+DEFAULT_SEPARATOR_TITLES = {
+    "separator_1": "General tools",
+    "separator_2": "Specialized tools",
+    "separator_3": "Project specific tools",
+    "separator_4": "ETC",
+}
+
+# Until 2026-10 Kalibra and Babylon were nested under one "Project specific
+# tools" category; saved orders still name it.
+_LEGACY_PROJECT_GROUP = "project_specific_tools"
+_PROJECT_TOOLS = ("kalibra_tools", "babylon_export")
+
 
 def is_panel_separator(key: str) -> bool:
     return key in PANEL_SEPARATOR_KEYS
@@ -320,22 +342,22 @@ def is_panel_separator(key: str) -> bool:
 
 def normalize_panel_order(raw_value: str | Iterable[str] | None) -> tuple[str, ...]:
     if raw_value is None:
-        ordered_keys: list[str] = []
-    elif isinstance(raw_value, str):
+        return PANEL_ORDER_DEFAULT
+    if isinstance(raw_value, str):
         ordered_keys = [part.strip() for part in raw_value.split(",") if part.strip()]
     else:
         ordered_keys = [part for part in raw_value if part]
 
     filtered = []
     for key in ordered_keys:
-        if key in {"kalibra_tools", "babylon_export"}:
-            key = "project_specific_tools"
-        if key in PANEL_LABELS and (key != "project_specific_tools" or key not in filtered):
-            filtered.append(key)
-        elif is_panel_separator(key) and key not in filtered:
-            filtered.append(key)
+        expanded = _PROJECT_TOOLS if key == _LEGACY_PROJECT_GROUP else (key,)
+        for item in expanded:
+            if (item in PANEL_LABELS or is_panel_separator(item)) and item not in filtered:
+                filtered.append(item)
+    # Categories missing from an older saved order are appended; separators
+    # are never re-added (the user may have removed them).
     for key in PANEL_ORDER_DEFAULT:
-        if key not in filtered:
+        if key in PANEL_LABELS and key not in filtered:
             filtered.append(key)
     return tuple(filtered)
 

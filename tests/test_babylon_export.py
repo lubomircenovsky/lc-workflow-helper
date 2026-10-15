@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from babylon_export.core import compute_bake_passes, baked_material_name, safe_batch_name, inspect_glb, verify_glb
-from constants import PANEL_ORDER_DEFAULT, normalize_panel_order
+from constants import PANEL_LABELS, PANEL_ORDER_DEFAULT, normalize_panel_order
 from babylon_export.exporters import is_gltf_exporter, selected_exporter, exporter_filepath
 from babylon_export.reporting import issue_outcome, last_operation_status
 
@@ -107,16 +107,16 @@ class BakePlanTests(unittest.TestCase):
         self.assertEqual(safe_batch_name('Door: a/b? '), 'Door_ a_b_')
         self.assertEqual(safe_batch_name(' . '), 'Bake')
 
-    def test_old_panel_order_gets_new_panel(self):
-        for old in ('scene_info,kalibra_tools,materials',
-                    'kalibra_tools,babylon_export,materials', 'babylon_export,kalibra_tools'):
-            result = normalize_panel_order(old)
-            self.assertEqual(result.count('project_specific_tools'), 1)
-            self.assertNotIn('babylon_export', result)
-            self.assertNotIn('kalibra_tools', result)
-            self.assertEqual(set(result), set(PANEL_ORDER_DEFAULT))
-        self.assertEqual(normalize_panel_order('materials,kalibra_tools,babylon_export,uv')[:3],
-                         ('materials', 'project_specific_tools', 'uv'))
+    def test_old_panel_orders_migrate(self):
+        # The former "Project specific tools" group expands to both tools in place.
+        result = normalize_panel_order('materials,project_specific_tools,uv')
+        self.assertEqual(result[:4], ('materials', 'kalibra_tools', 'babylon_export', 'uv'))
+        self.assertNotIn('project_specific_tools', result)
+        self.assertEqual(set(result), set(PANEL_LABELS), 'old orders get every category, no separators')
+        # Each tool on its own keeps its position.
+        self.assertEqual(normalize_panel_order('babylon_export,uv,kalibra_tools')[:3],
+                         ('babylon_export', 'uv', 'kalibra_tools'))
+        self.assertEqual(normalize_panel_order(None), PANEL_ORDER_DEFAULT)
 
     def test_selected_pairs_only_with_full_assignments(self):
         defaults = {('door', 0): 'wood', ('door', 1): 'plain', ('glass', 0): 'glass'}

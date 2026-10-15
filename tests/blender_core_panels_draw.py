@@ -76,7 +76,7 @@ def open_all(data):
 
 def draw(panel_cls):
     calls = []
-    panel_cls.draw(SimpleNamespace(layout=Layout(calls)), bpy.context)
+    panel_cls.draw(SimpleNamespace(layout=Layout(calls), lcw_separator_key=getattr(panel_cls, 'lcw_separator_key', '')), bpy.context)
     return calls
 
 

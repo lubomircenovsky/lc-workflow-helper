@@ -19,8 +19,7 @@ class LCW_UL_babylon_materials(bpy.types.UIList):
 class LCW_PT_babylon_export(bpy.types.Panel):
     bl_label = 'Babylon Bake & Export'
     bl_idname = 'LCW_PT_babylon_export'
-    bl_parent_id = 'LCW_PT_project_specific_tools'
-    bl_order = 1
+    bl_parent_id = 'LCW_PT_root'
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = 'LC Workflow'

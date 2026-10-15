@@ -10,7 +10,8 @@ import bpy
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import LC_workflow_addon as addon
-from LC_workflow_addon.constants import PANEL_ORDER_DEFAULT, PANEL_SEPARATOR_KEYS, normalize_panel_order
+from LC_workflow_addon.constants import (
+    DEFAULT_SEPARATOR_TITLES, PANEL_LABELS, PANEL_ORDER_DEFAULT, PANEL_SEPARATOR_KEYS, normalize_panel_order)
 from LC_workflow_addon.ui import panels
 
 FUNCTIONS = bpy.types.UILayout.bl_rna.functions
@@ -68,13 +69,33 @@ def draw(panel_cls):
 
 # Normalization keeps known separators once and drops unknown keys.
 assert normalize_panel_order('favorites,separator_1,separator_1,separator_99,uv')[:3] == ('favorites', 'separator_1', 'uv')
-assert set(normalize_panel_order(None)) == set(PANEL_ORDER_DEFAULT)
+assert normalize_panel_order(None) == PANEL_ORDER_DEFAULT
+assert normalize_panel_order(','.join(PANEL_ORDER_DEFAULT)) == PANEL_ORDER_DEFAULT
+# A removed default separator is not brought back by normalization.
+assert 'separator_1' not in normalize_panel_order(','.join(k for k in PANEL_ORDER_DEFAULT if k != 'separator_1'))
 
 addon.register()
 try:
     state = bpy.context.scene.lcw_scene_state
     first = panels.SEPARATOR_CLASS_MAP['separator_1']
-    assert not first.poll(bpy.context), 'no separator by default'
+
+    # A new file shows the default layout: four named groups.
+    panels._refresh_panel_order_on_load(None)
+    assert order() == PANEL_ORDER_DEFAULT
+    for key, title in DEFAULT_SEPARATOR_TITLES.items():
+        cls = panels.SEPARATOR_CLASS_MAP[key]
+        assert cls.poll(bpy.context) and cls.bl_order == PANEL_ORDER_DEFAULT.index(key) + 1
+        assert next(c for c in draw(cls) if c[0] == 'label')[1] == title, key
+    # Opening the order editor gives the default separators editable names.
+    assert len(state.panel_separators) == 0
+    bpy.context.window_manager.lcw_state.root_category_order_open = True
+    assert {i.key: i.title for i in state.panel_separators} == DEFAULT_SEPARATOR_TITLES
+
+    # An older file's order without separators: none are shown.
+    state.panel_order = ','.join(PANEL_LABELS)
+    state.panel_separators.clear()
+    panels.refresh_panel_registration()
+    assert not first.poll(bpy.context), 'old orders have no separators'
 
     assert bpy.ops.lcw.main_panel_separator_add() == {'FINISHED'}
     assert order()[-1] == 'separator_1'
@@ -118,7 +139,14 @@ try:
     assert not any(key in order() for key in PANEL_SEPARATOR_KEYS)
     assert len(state.panel_separators) == 0
     assert not first.poll(bpy.context)
-    assert set(order()) == set(PANEL_ORDER_DEFAULT)
+    assert set(order()) == set(PANEL_LABELS)
+
+    # Reset restores the default layout and names in this file.
+    state.panel_order = 'uv,favorites'
+    assert bpy.ops.lcw.main_panel_reset_layout('EXEC_DEFAULT') == {'FINISHED'}
+    assert order() == PANEL_ORDER_DEFAULT
+    assert {i.key: i.title for i in state.panel_separators} == DEFAULT_SEPARATOR_TITLES
+    assert all(panels.SEPARATOR_CLASS_MAP[k].poll(bpy.context) for k in DEFAULT_SEPARATOR_TITLES)
 finally:
     addon.unregister()
 print('PASS blender_panel_separators')

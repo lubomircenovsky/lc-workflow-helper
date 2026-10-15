@@ -79,6 +79,18 @@ class LCW_PG_FavoriteAction(bpy.types.PropertyGroup):
     action_id: StringProperty(name="Action ID", default="")
 
 
+def _ensure_separator_titles_on_open(self, context) -> None:
+    # Default separators of a file have no stored name yet; opening the order
+    # editor (a user action, not draw) gives them editable name entries.
+    if not self.root_category_order_open:
+        return
+    from .operators.panel_order import ensure_separator_items
+
+    file_state = getattr(getattr(context, "scene", None), "lcw_scene_state", None)
+    if file_state is not None:
+        ensure_separator_items(file_state)
+
+
 class LCW_PG_PanelSeparator(bpy.types.PropertyGroup):
     key: StringProperty(name="Separator Key", default="")
     title: StringProperty(
@@ -1107,7 +1119,11 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     shape_tool_reset_matching_open: BoolProperty(name="Reset Matching Shape Keys", default=False)
     shape_tool_deselect_text_open: BoolProperty(name="Deselect by Shape Key Text", default=False)
     shape_tool_animation_open: BoolProperty(name="Preview Shape Keys", default=False)
-    root_category_order_open: BoolProperty(name="Main Category Order", default=False)
+    root_category_order_open: BoolProperty(
+        name="Main Category Order",
+        default=False,
+        update=_ensure_separator_titles_on_open,
+    )
     material_tool_assign_faces_open: BoolProperty(name="Assign Material to Faces", default=False)
     color_tool_initialize_open: BoolProperty(name="Initialize Color Attribute", default=True)
     color_tool_apply_open: BoolProperty(name="Apply Vertex Colors", default=False)
