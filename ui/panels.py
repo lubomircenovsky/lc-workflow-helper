@@ -105,7 +105,8 @@ def _draw_baker_card(layout: bpy.types.UILayout, state, definition) -> None:
     header = card.row(align=True)
     header.prop(state, section_field, text="", emboss=False, icon="TRIA_DOWN" if getattr(state, section_field) else "TRIA_RIGHT")
     header.prop(state, definition.enabled_field, text=definition.label)
-    header.label(text=SDB_BAKER_SUMMARIES[definition.baker_id], icon="CHECKMARK" if getattr(state, definition.enabled_field) else "RADIOBUT_OFF")
+    # Neutral icon: the checkbox already says enabled; a checkmark would read as a validation result.
+    header.label(text=SDB_BAKER_SUMMARIES[definition.baker_id], icon="TEXTURE")
 
     if not getattr(state, section_field):
         return
@@ -768,6 +769,7 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
         file_state = scene_state(context)
 
         box = layout.box()
+        box.label(text="Material Links", icon="LINKED")
         row = box.row(align=True)
         _draw_action_button(row, context, "materials.link_slots_data", "lcw.material_link_slots_data", icon="MESH_DATA")
         _draw_action_button(row, context, "materials.link_slots_object", "lcw.material_link_slots_object", icon="OBJECT_DATA")
@@ -777,6 +779,7 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
         _draw_action_button(row, context, "materials.random_active_color", "lcw.material_random_active_color")
 
         box = layout.box()
+        box.label(text="Assign Material", icon="MATERIAL")
         for slot_index in range(1, 4):
             row = box.row(align=True)
             split = row.split(factor=0.78, align=True)
@@ -812,6 +815,7 @@ class LCW_PT_materials(LCW_PT_base, bpy.types.Panel):
             )
 
         box = _simple_tool_box(layout)
+        box.label(text="Cleanup", icon="TRASH")
         row = box.row(align=True)
         _draw_action_button(row, context, "materials.remove_unused_slots", "lcw.material_remove_unused_slots")
 
@@ -898,6 +902,7 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
 
         section = _draw_collapsible_section(layout, bake_state, "defaults_section_open", "Common Settings", icon="PREFERENCES")
         if section:
+            section.label(text="Output", icon="FILE_FOLDER")
             section.prop(bake_state, "output_root")
 
             row = section.row(align=True)
@@ -918,6 +923,8 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             row.label(text="Anti Alias")
             row.prop(bake_state, "anti_aliasing", text="")
 
+            section.separator(type="LINE")
+            section.label(text="UV & Padding", icon="GROUP_UVS")
             row = section.row(align=True)
             row.label(text="UV Set")
             compact = row.row(align=True)
@@ -1000,14 +1007,17 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
         section = _draw_collapsible_section(layout, bake_state, "actions_section_open", "Bake", icon="PLAY")
         if section:
             row = section.row(align=True)
+            row.scale_y = 1.3
             row.operator("lcw.sdb_bake_ao", text="Bake Enabled Bakers", icon="RENDER_STILL")
             row.enabled = bake_state.job_status != "RUNNING"
             enabled_labels = [definition.label for definition in BAKER_DEFINITIONS if getattr(bake_state, definition.enabled_field)]
             section.label(text=f"Enabled: {', '.join(enabled_labels) if enabled_labels else 'None'}", icon="RENDERLAYERS")
+            section.separator(type="LINE")
             actions = section.row(align=True)
             actions.operator("lcw.sdb_open_output_folder", icon="FILE_FOLDER")
             actions.operator("lcw.sdb_show_last_log", icon="TEXT")
             status_box = section.box()
+            status_box.label(text="Last Run", icon="TEXT")
             status_box.label(text=f"Status: {bake_state.job_status}")
             if bake_state.job_message:
                 status_box.label(text=bake_state.job_message, icon="INFO")
@@ -1066,6 +1076,7 @@ class LCW_PT_colors(LCW_PT_base, bpy.types.Panel):
         )
         if box:
             box.label(text=f"Target Attribute: {state.color_attribute_name}", icon="GROUP_VCOL")
+            box.label(text="Palette", icon="COLOR")
             palette = box.row(align=True)
             for slot_index in range(1, 6):
                 slot = palette.row(align=True)
@@ -1110,6 +1121,7 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
         state = wm_state(context)
 
         box = layout.box()
+        box.label(text="Active UV Channel", icon="GROUP_UVS")
         box.prop(
             scene_state(context),
             "uv_rebuild_seams_on_switch",
@@ -1212,6 +1224,8 @@ class LCW_PT_uv(LCW_PT_base, bpy.types.Panel):
                 props={"new_name": state.uv_rename_uv3},
             )
 
+        # Channel management above, UV generation below.
+        layout.separator(type="LINE")
         draw_uv_preparation(layout, context)
 
 
@@ -1347,7 +1361,9 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
         preset_box = layout.box()
         preset_box.label(text="Selected Preset", icon="PRESET")
         preset_box.prop(preset, "name", text="Name")
-        preset_box.operator("lcw.workflow_preset_run", text="Run Workflow Preset", icon="PLAY")
+        run_row = preset_box.row()
+        run_row.scale_y = 1.3
+        run_row.operator("lcw.workflow_preset_run", text="Run Workflow Preset", icon="PLAY")
 
         actions_box = layout.box()
         actions_box.label(text="Preset Actions", icon="PLAY")
@@ -1377,7 +1393,7 @@ class LCW_PT_workflow_presets(LCW_PT_base, bpy.types.Panel):
             action_index = max(0, min(preset.active_action_index, action_count - 1))
             action = preset.actions[action_index]
             box = actions_box.box()
-            box.label(text="Action Settings")
+            box.label(text="Action Settings", icon="TOOL_SETTINGS")
             _draw_preset_action_settings(box, action)
 
 
