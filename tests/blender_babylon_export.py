@@ -100,6 +100,13 @@ class Layout:
     def progress(self, **kwargs):
         self.calls.append(('progress', kwargs.get('text')))
 
+    def separator(self, **kwargs):
+        params = bpy.types.UILayout.bl_rna.functions['separator'].parameters
+        assert set(kwargs) <= set(params.keys()), kwargs
+        if 'type' in kwargs:
+            assert kwargs['type'] in {item.identifier for item in params['type'].enum_items}
+        self.calls.append(('separator', kwargs))
+
     def template_list(self, name, identifier, data, propname, active_data, active_propname, **kwargs):
         assert name == 'LCW_UL_babylon_materials'
         assert propname in data.bl_rna.properties

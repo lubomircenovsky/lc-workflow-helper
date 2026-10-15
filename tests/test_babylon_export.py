@@ -11,6 +11,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from babylon_export.core import compute_bake_passes, baked_material_name, safe_batch_name, inspect_glb, verify_glb
 from constants import PANEL_ORDER_DEFAULT, normalize_panel_order
 from babylon_export.exporters import is_gltf_exporter, selected_exporter, exporter_filepath
+from babylon_export.reporting import issue_outcome, last_operation_status
+
+
+class OperationReportingTests(unittest.TestCase):
+    def test_severity_precedence(self):
+        for levels, expected in (([], 'OK'), (['INFO'], 'OK'),
+                                 (['WARNING'], 'WARNING'),
+                                 (['WARNING', 'ERROR'], 'ERROR')):
+            with self.subTest(levels=levels):
+                self.assertEqual(issue_outcome([SimpleNamespace(level=v) for v in levels]), expected)
+
+    def test_historical_outcomes_and_collection_identity(self):
+        collection = SimpleNamespace(name='Target')
+        state = SimpleNamespace(last_operation='CHECK', last_outcome='OK',
+                                report_collection=collection, last_report='Export failed!')
+        # The report string never controls the outcome.
+        self.assertEqual(last_operation_status(state, collection),
+                         ('ok', 'Last Check: no issues reported'))
+        for outcome, icon in (('WARNING', 'warning'), ('ERROR', 'error'),
+                              ('CANCELLED', 'cancelled'), ('UNKNOWN', 'idle')):
+            state.last_outcome = outcome
+            self.assertEqual(last_operation_status(state, collection)[0], icon)
+        state.last_outcome = 'OK'
+        other = SimpleNamespace(name='Other')
+        self.assertEqual(last_operation_status(state, other), ('info', 'Last report: Target'))
+        state.report_collection = None
+        self.assertEqual(last_operation_status(state, other),
+                         ('info', 'Last report: collection unavailable'))
 
 
 def glb(document, binary=b'PNG!'):

@@ -69,6 +69,27 @@ class LCW_PG_babylon_state(bpy.types.PropertyGroup):
     target_collection: bpy.props.PointerProperty(name="Target Collection", type=bpy.types.Collection)
     last_report: bpy.props.StringProperty(default="Not checked yet.")
     issues: bpy.props.CollectionProperty(type=LCW_PG_babylon_issue)
+    last_operation: bpy.props.EnumProperty(
+        name='Last Operation', default='UNKNOWN', items=[
+            ('UNKNOWN', 'Unknown', 'No typed operation result is available'),
+            ('CHECK', 'Check', 'Bake and export checks'),
+            ('BAKE', 'Bake', 'Bake materials'),
+            ('BAKE_EXPORT', 'Bake & Export', 'Bake materials and export GLB'),
+            ('EXPORT', 'Export', 'Export and verify GLB'),
+            ('CLEANUP', 'Clean Up', 'Remove temporary datablocks'),
+        ])
+    last_outcome: bpy.props.EnumProperty(
+        name='Last Outcome', default='UNKNOWN', items=[
+            ('UNKNOWN', 'Unknown', 'No typed result is available'),
+            ('OK', 'OK', 'The last operation completed successfully'),
+            ('WARNING', 'Warning', 'The last operation reported warnings'),
+            ('ERROR', 'Error', 'The last operation failed or reported errors'),
+            ('CANCELLED', 'Cancelled', 'The last operation was cancelled'),
+        ])
+    report_collection: bpy.props.PointerProperty(name='Report Collection', type=bpy.types.Collection)
+    # The scene's master collection is embedded data and cannot be stored in a
+    # pointer property, so a report about it is flagged instead.
+    report_scene_collection: bpy.props.BoolProperty(name='Report Scene Collection', default=False)
 
 
 CLASSES = (LCW_PG_babylon_material, LCW_PG_babylon_settings, LCW_PG_babylon_issue, LCW_PG_babylon_state)

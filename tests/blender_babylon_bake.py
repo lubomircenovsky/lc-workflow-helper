@@ -15,6 +15,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import bpy
 
@@ -23,6 +24,7 @@ import LC_workflow_addon as addon
 from LC_workflow_addon.babylon_export import bake as bake_module
 from LC_workflow_addon.babylon_export import simplebake_adapter as real_adapter
 from LC_workflow_addon.babylon_export import validation as validation_module
+from LC_workflow_addon.babylon_export import operators as operator_module
 from LC_workflow_addon.babylon_export.bake import CANCELLED, FAILED, FINISHED, RUNNING, BakeJob
 from LC_workflow_addon.babylon_export.core import verify_glb
 from LC_workflow_addon.babylon_export.materials import find_baked_material
@@ -246,6 +248,27 @@ def run(job, limit=400):
     raise AssertionError('job did not finish')
 
 
+def run_modal(job, limit=400):
+    """Drive the real job through its modal writer, checking every running tick."""
+    state = job.scene.lcw_babylon_export
+    fields = ('last_operation', 'last_outcome', 'report_collection', 'last_report')
+    before = tuple(getattr(state, name) for name in fields)
+    operator = SimpleNamespace(_job=job, _collection=job.collection, export_after=False,
+                               _shown_text='', report=lambda *_: None,
+                               _end=lambda context, result: result)
+    bake_module.set_active_job(job)
+    for _ in range(limit):
+        result = operator_module.LCW_OT_babylon_bake.modal(
+            operator, bpy.context, SimpleNamespace(type='TIMER'))
+        if result != {'PASS_THROUGH'}:
+            assert state.last_operation == 'BAKE' and state.report_collection == job.collection
+            expected = {FINISHED: 'OK', FAILED: 'ERROR', CANCELLED: 'CANCELLED'}[job.result]
+            assert state.last_outcome == expected
+            return job.result
+        assert tuple(getattr(state, name) for name in fields) == before, 'running job wrote report state'
+    raise AssertionError('modal job did not finish')
+
+
 def slot_names(obj):
     return [s.material.name if s.material else None for s in obj.material_slots]
 
@@ -340,7 +363,7 @@ try:
         sb_before = sb_values(sbp)
         job.start()
         assert job.total_passes == 3, job.total_passes
-        assert run(job) == FINISHED, job.message
+        assert run_modal(job) == FINISHED, job.message
         assert [s['enabled'] for s in adapter.starts] == [
             {('door', 'Wood_A')}, {('door', 'Wood_B')}, {('door', 'Wood_C')}], adapter.starts
         assert all(s['objects'] == ['door'] for s in adapter.starts)
@@ -410,7 +433,7 @@ try:
         job.start()
         assert job.step() == RUNNING  # first pass started
         job.request_cancel()
-        assert run(job) == CANCELLED, job.message
+        assert run_modal(job) == CANCELLED, job.message
         assert len(adapter.starts) == 1
         assert_restored(door, before, sbp, sb_before, adapter)
         print('PASS babylon_bake_cancel_after_pass')
@@ -523,6 +546,22 @@ try:
         bpy.data.scenes.remove(other_scene)
         assert_restored(door, before, sbp, sb_before, adapter)
         print('PASS babylon_bake_edit_mode_and_scene_guard')
+
+        # --- a real restore failure must persist ERROR, never a successful bake
+        job, adapter, sbp = new_job(collection)
+        sb_before = sb_values(sbp)
+        job.start()
+        restore = adapter.restore_settings
+
+        def failing_restore(props, token):
+            restore(props, token)  # leave the test fixture restored
+            raise RuntimeError('simulated settings restore failure')
+
+        with patch.object(adapter, 'restore_settings', side_effect=failing_restore):
+            assert run_modal(job) == FAILED, job.message
+        assert 'simulated settings restore failure' in bpy.context.scene.lcw_babylon_export.last_report
+        assert_restored(door, before, sbp, sb_before, adapter)
+        print('PASS babylon_bake_modal_restore_failure_outcome')
 
         # --- nothing selected
         for item in collection.lcw_babylon_export.material_selections:

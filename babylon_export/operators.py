@@ -6,6 +6,7 @@ from .plan import build_bake_plan
 from .settings import target_collection
 from .validation import validate
 from .selection import refresh_material_list
+from .reporting import issue_outcome, store_outcome
 from .bake import CANCELLED, FAILED, FINISHED, RUNNING, BakeJob, active_job, set_active_job
 
 
@@ -16,7 +17,7 @@ def store_issues(state, issues):
         item.level, item.text = issue.level, issue.text
 
 
-def refresh_for_operator(operator, collection, state):
+def refresh_for_operator(operator, collection, state, operation='UNKNOWN'):
     try:
         refresh_material_list(collection)
         return True
@@ -24,6 +25,9 @@ def refresh_for_operator(operator, collection, state):
         state.last_report = str(exc)
         collection.lcw_babylon_export.last_report = str(exc)
         store_issues(state, [Issue('ERROR', str(exc))])
+        # A standalone Refresh failure replaces the old report too; invalidate
+        # its typed result rather than retaining an unrelated green outcome.
+        store_outcome(state, collection, operation, 'ERROR' if operation != 'UNKNOWN' else 'UNKNOWN')
         operator.report({'ERROR'}, str(exc))
         return False
 
@@ -57,10 +61,18 @@ class LCW_OT_babylon_check(bpy.types.Operator):
     def execute(self, context):
         collection = target_collection(context)
         state = context.scene.lcw_babylon_export
-        if not refresh_for_operator(self, collection, state):
+        if not refresh_for_operator(self, collection, state, 'CHECK'):
             return {'CANCELLED'}
-        bake_issues = validate(collection)
-        export_issues = validate(collection, for_export=True)
+        try:
+            bake_issues = validate(collection)
+            export_issues = validate(collection, for_export=True)
+        except Exception as exc:
+            state.last_report = f'Check failed: {exc}'
+            collection.lcw_babylon_export.last_report = state.last_report
+            store_issues(state, [Issue('ERROR', str(exc))])
+            store_outcome(state, collection, 'CHECK', 'ERROR')
+            self.report({'ERROR'}, state.last_report)
+            return {'CANCELLED'}
         # Shared problems appear once; bake-only messages are clearly labelled.
         shared = {(i.level, i.text) for i in export_issues}
         store_issues(state, export_issues)
@@ -72,6 +84,7 @@ class LCW_OT_babylon_check(bpy.types.Operator):
         export_errors = sum(i.level == 'ERROR' for i in export_issues)
         state.last_report = f'Export errors: {export_errors}. Bake errors: {bake_errors}.'
         collection.lcw_babylon_export.last_report = state.last_report
+        store_outcome(state, collection, 'CHECK', issue_outcome(state.issues))
         self.report({'WARNING' if export_errors or bake_errors else 'INFO'}, state.last_report)
         return {'FINISHED'}
 
@@ -88,23 +101,25 @@ class LCW_OT_babylon_export(bpy.types.Operator):
     def execute(self, context):
         collection = target_collection(context)
         state = context.scene.lcw_babylon_export
-        if not refresh_for_operator(self, collection, state):
+        if not refresh_for_operator(self, collection, state, 'EXPORT'):
             return {'CANCELLED'}
         ok, message = run_export(collection, state)
         self.report({'INFO'} if ok else {'ERROR'}, message)
         return {'FINISHED'} if ok else {'CANCELLED'}
 
 
-def run_export(collection, state):
+def run_export(collection, state, operation='EXPORT'):
     """Validate, export, verify; store issues and reports. Return (ok, message)."""
     settings = collection.lcw_babylon_export
-    issues = validate(collection, for_export=True)
-    store_issues(state, issues)
-    if any(i.level == 'ERROR' for i in issues):
-        state.last_report = 'Export cannot start: ' + next(i.text for i in issues if i.level == 'ERROR')
-        settings.last_report = state.last_report
-        return False, state.last_report
+    issues = []
     try:
+        issues = validate(collection, for_export=True)
+        store_issues(state, issues)
+        if any(i.level == 'ERROR' for i in issues):
+            state.last_report = 'Export cannot start: ' + next(i.text for i in issues if i.level == 'ERROR')
+            settings.last_report = state.last_report
+            store_outcome(state, collection, operation, 'ERROR')
+            return False, state.last_report
         plan = build_bake_plan(collection)
         info = {}
         path = export_collection(collection, settings, result_info=info)
@@ -121,11 +136,15 @@ def run_export(collection, state):
                              f'variants: {report["variants"]}, images: {report["images"]}.')
         if not report['ok']:
             state.last_report = 'GLB failed verification. ' + state.last_report
+            store_outcome(state, collection, operation, 'ERROR')
             return False, state.last_report
+        store_outcome(state, collection, operation, issue_outcome(state.issues))
         return True, state.last_report
     except Exception as exc:
         state.last_report = f'Export failed: {exc}'
         settings.last_report = state.last_report
+        store_issues(state, [*issues, Issue('ERROR', str(exc))])
+        store_outcome(state, collection, operation, 'ERROR')
         return False, state.last_report
 
 
@@ -139,14 +158,21 @@ class LCW_OT_babylon_cleanup(bpy.types.Operator):
         return bool(context.scene) and active_job() is None
 
     def execute(self, context):
+        state = context.scene.lcw_babylon_export
+        collection = target_collection(context)
         try:
             count = cleanup()
             message = f'Removed temporary datablocks: {count}.'
-            context.scene.lcw_babylon_export.last_report = message
+            state.last_report = message
+            store_issues(state, [])
+            store_outcome(state, collection, 'CLEANUP', 'OK')
             self.report({'INFO'}, message)
             return {'FINISHED'}
         except Exception as exc:
-            self.report({'ERROR'}, f'Cleanup failed: {exc}')
+            state.last_report = f'Cleanup failed: {exc}'
+            store_issues(state, [Issue('ERROR', str(exc))])
+            store_outcome(state, collection, 'CLEANUP', 'ERROR')
+            self.report({'ERROR'}, state.last_report)
             return {'CANCELLED'}
 
 
@@ -168,20 +194,23 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
     def invoke(self, context, _event):
         collection = target_collection(context)
         state = context.scene.lcw_babylon_export
-        if not refresh_for_operator(self, collection, state):
+        operation = 'BAKE_EXPORT' if self.export_after else 'BAKE'
+        if not refresh_for_operator(self, collection, state, operation):
             return {'CANCELLED'}
         job = BakeJob(collection)
         try:
             job.start()
         except Exception as exc:  # BakeError or validation failure, nothing changed yet
-            store_issues(state, [i for i in validate(collection) if i.level == 'ERROR'])
             state.last_report = f'Bake cannot start: {exc}'
+            # List every blocking validation error, not only the summary in exc.
+            errors = [i for i in validate(collection) if i.level == 'ERROR']
+            store_issues(state, errors or [Issue('ERROR', str(exc))])
+            store_outcome(state, collection, operation, 'ERROR')
             self.report({'ERROR'}, state.last_report)
             return {'CANCELLED'}
         self._collection = collection
         self._job = job
         set_active_job(job)
-        state.last_report = job.progress_text()
         self._timer = context.window_manager.event_timer_add(0.5, window=context.window)
         job.ui_timer = (context.window_manager, self._timer)
         context.window_manager.modal_handler_add(self)
@@ -215,13 +244,21 @@ class LCW_OT_babylon_bake(bpy.types.Operator):
                 _redraw(context)
             return {'PASS_THROUGH'}
         set_active_job(None)
-        state = (job.scene if job.scene_valid() else context.scene).lcw_babylon_export
+        if not job.scene_valid():
+            # Never publish the old job's result into a different scene.
+            return self._end(context, {'CANCELLED'})
+        state = job.scene.lcw_babylon_export
         state.last_report = job.message
+        operation = 'BAKE_EXPORT' if self.export_after else 'BAKE'
         if status == FINISHED and self.export_after:
-            ok, message = run_export(self._collection, state)
-            state.last_report = f'{job.message} {message}'
+            ok, message = run_export(self._collection, state, operation=operation)
+            prefix = '' if ok else 'Bake finished; export failed. '
+            state.last_report = f'{prefix}{job.message} {message}'
             self.report({'INFO'} if ok else {'ERROR'}, state.last_report)
             return self._end(context, {'FINISHED'} if ok else {'CANCELLED'})
+        store_issues(state, [Issue('ERROR', job.message)] if status == FAILED else [])
+        outcome = 'OK' if status == FINISHED else 'CANCELLED' if status == CANCELLED else 'ERROR'
+        store_outcome(state, self._collection, operation, outcome)
         level = {'INFO'} if status == FINISHED else {'WARNING'} if status == CANCELLED else {'ERROR'}
         self.report(level, job.message)
         return self._end(context, {'FINISHED'} if status == FINISHED else {'CANCELLED'})
