@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
+import traceback
 import uuid
 from pathlib import Path
 
@@ -492,8 +493,18 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
             "output_dir": str(paths["output_dir"]),
         }
 
+        executable_path = bpy.path.abspath(preferences.substance_baker_executable)
+
         def _run_job():
-            result_holder.update(execute_bake_plan(plan, preferences.substance_baker_executable, paths["log_path"]))
+            try:
+                result_holder.update(execute_bake_plan(plan, executable_path, paths["log_path"]))
+            except Exception as exc:
+                # Thread exceptions must reach the modal operator's visible result.
+                result_holder.update(success=False, message=f"Bake failed: {exc}")
+                try:
+                    paths["log_path"].write_text(traceback.format_exc(), encoding="utf-8")
+                except OSError:
+                    pass
 
         thread = threading.Thread(target=_run_job, daemon=True)
         thread.start()

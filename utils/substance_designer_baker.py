@@ -535,22 +535,26 @@ def parse_baker_info(raw_output: str) -> list[dict[str, str]]:
     mesh_name: str | None = None
     mesh_path: str | None = None
     material_id: str | None = None
+    subset_path: str | None = None
+
+    def append_mesh() -> None:
+        if mesh_name and mesh_path and material_id:
+            meshes.append({
+                "MeshName": mesh_name,
+                # Multi-material FBX meshes are baked through their USD subsets.
+                "MeshPath": subset_path or mesh_path,
+                "MaterialId": material_id,
+                "ObjectName": _get_object_name_from_mesh_path(mesh_path) or mesh_name,
+            })
 
     for line in raw_output.splitlines():
         mesh_match = re.match(r"^\s*Mesh:\s*(.+)\s*$", line)
         if mesh_match:
-            if mesh_name and mesh_path and material_id:
-                meshes.append(
-                    {
-                        "MeshName": mesh_name,
-                        "MeshPath": mesh_path,
-                        "MaterialId": material_id,
-                        "ObjectName": _get_object_name_from_mesh_path(mesh_path) or mesh_name,
-                    }
-                )
+            append_mesh()
             mesh_name = mesh_match.group(1).strip()
             mesh_path = None
             material_id = None
+            subset_path = None
             continue
 
         path_match = re.match(r"^\s*Path:\s*(/.*)\s*$", line)
@@ -558,19 +562,18 @@ def parse_baker_info(raw_output: str) -> list[dict[str, str]]:
             mesh_path = path_match.group(1).strip()
             continue
 
+        subset_match = re.match(r'^\s*GeomSubset\s+"([^"\r\n]+)"', line)
+        if subset_match:
+            append_mesh()
+            subset_path = subset_match.group(1)
+            material_id = None
+            continue
+
         material_match = re.match(r"^\s*Material ID:\s*(.+)\s*$", line)
         if material_match:
             material_id = material_match.group(1).strip()
 
-    if mesh_name and mesh_path and material_id:
-        meshes.append(
-            {
-                "MeshName": mesh_name,
-                "MeshPath": mesh_path,
-                "MaterialId": material_id,
-                "ObjectName": _get_object_name_from_mesh_path(mesh_path) or mesh_name,
-            }
-        )
+    append_mesh()
 
     return meshes
 
@@ -1060,19 +1063,54 @@ def execute_bake_plan(plan: dict[str, object], executable_path: str, log_path: s
     success = True
     failure_message = ""
 
+    if not plan["Bakers"]:
+        success = False
+        failure_message = "No bakers were enabled."
+
     for baker_entry in plan["Bakers"]:
-        command = _bake_command_from_plan(plan, baker_entry)
-        log_lines.append(f"$ {Path(executable_path).name} {' '.join(command)}")
-        result = run_baker_command(executable_path, command)
-        if result.stdout:
-            log_lines.append(result.stdout.rstrip())
-        if result.stderr:
-            log_lines.append(result.stderr.rstrip())
-        if result.returncode != 0:
+        try:
+            output_name = baker_entry["OutputName"]
+            output_format = str(plan["Common"]["output_format"]).lower().lstrip(".")
+
+            def output_files() -> dict[str, tuple[int, int]]:
+                files = {}
+                for filename in find_baked_files(output_dir, output_name):
+                    path = Path(filename)
+                    if path.suffix.lower() != f".{output_format}":
+                        continue
+                    if path.stem != output_name and not path.stem.startswith(f"{output_name}_"):
+                        continue
+                    stat = path.stat()
+                    if stat.st_size:
+                        files[filename] = (stat.st_mtime_ns, stat.st_size)
+                return files
+
+            before = output_files()
+            command = _bake_command_from_plan(plan, baker_entry)
+            log_lines.append(f"$ {Path(executable_path).name} {' '.join(command)}")
+            result = run_baker_command(executable_path, command)
+            diagnostic = "\n".join(part for part in (result.stdout, result.stderr) if part)
+            if diagnostic:
+                log_lines.append(diagnostic.rstrip())
+            errors = [line.strip() for line in diagnostic.splitlines() if "[ERROR]" in line.upper()]
+            missing_attributes = next(
+                (line.strip() for line in diagnostic.splitlines()
+                 if "missing some mandatory attribute" in line.lower()), "",
+            )
+            if result.returncode != 0 or errors or missing_attributes:
+                detail = errors[0] if errors else f"Process exited with code {result.returncode}."
+                if missing_attributes:
+                    detail = f"{missing_attributes} {detail}" if errors else missing_attributes
+                raise RuntimeError(detail)
+            fresh_files = [filename for filename, stamp in output_files().items() if before.get(filename) != stamp]
+            if not fresh_files:
+                raise RuntimeError("No new or updated output image was generated. Check the mesh selection and UV set.")
+            baked_files.extend(fresh_files)
+        except Exception as exc:
             success = False
-            failure_message = f"Bake failed for '{baker_entry['Label']}' group '{baker_entry['GroupName']}'."
+            failure_message = f"Bake failed for '{baker_entry['Label']}' group '{baker_entry['GroupName']}': {exc}"
+            log_lines.append(failure_message)
             break
-        baked_files.extend(find_baked_files(output_dir, baker_entry["OutputName"]))
 
     Path(log_path).write_text("\n\n".join(part for part in log_lines if part), encoding="utf-8")
     return {
