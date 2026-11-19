@@ -20,7 +20,7 @@ from ..quad_reconstruction.panels import (
 from ..cad_reconstruction.panels import LCW_PT_cad_reconstruction, draw_uv_preparation
 from ..babylon_export.panels import LCW_PT_babylon_export, LCW_UL_babylon_materials
 from ..operators.favorites import favorite_action_available
-from ..utils.substance_designer_baker import BAKER_DEFINITIONS, get_export_source
+from ..utils.substance_designer_baker import BAKER_DEFINITIONS, get_baker_export_source
 from ..utils.common import addon_preferences, is_favorite_action, scene_state, wm_state
 
 
@@ -860,13 +860,18 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
         file_state = scene_state(context)
         bake_state = file_state.substance_designer_baker
         preferences = addon_preferences(context)
-        collection = bake_state.target_collection
         inspect_export_path = bake_state.last_export_path or "bakers_preview.fbx"
-        export_source = get_export_source(collection, inspect_export_path)
+        export_source = get_baker_export_source(bake_state, inspect_export_path)
 
         section = _draw_collapsible_section(layout, bake_state, "scope_section_open", "Scope", icon="OUTLINER_COLLECTION")
         if section:
-            section.prop(bake_state, "target_collection")
+            input_box = section.column(align=True)
+            input_box.enabled = bake_state.job_status != "RUNNING"
+            input_box.prop(bake_state, "input_mode", expand=True)
+            if bake_state.input_mode == "COLLECTION":
+                input_box.prop(bake_state, "target_collection")
+            else:
+                input_box.label(text="Uses selected mesh objects at start.", icon="INFO")
             profiles_box = section.box()
             profiles_box.label(text="Baker Profiles", icon="PRESET")
             profiles_box.operator("lcw.baker_profile_add", text="New Profile", icon="ADD")
@@ -896,7 +901,7 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             else:
                 profiles_box.label(text="Create a profile from the current baker settings.", icon="INFO")
             selection_box = section.box()
-            selection_box.prop(bake_state, "selection_mode")
+            selection_box.prop(bake_state, "selection_mode", text="Group By")
             if bake_state.selection_mode == "ALL_EXCEPT_EXCLUDED":
                 selection_box.prop(bake_state, "excluded_material_pattern")
 
@@ -905,6 +910,8 @@ class LCW_PT_substance_designer_baker(LCW_PT_base, bpy.types.Panel):
             section.label(text=export_source["label"], icon="EXPORT")
             if export_source["kind"] == "COLLECTION_EXPORTER":
                 section.label(text="Using first configured FBX exporter on the target collection.", icon="CHECKMARK")
+            elif bake_state.input_mode == "SELECTED":
+                section.label(text="Internal FBX export uses only selected meshes.", icon="INFO")
             else:
                 section.label(text="Fallback export uses FBX Units Scale and collection-only export.", icon="INFO")
 

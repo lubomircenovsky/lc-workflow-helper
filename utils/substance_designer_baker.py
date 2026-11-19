@@ -30,6 +30,9 @@ __all__ = (
     "execute_bake_plan",
     "export_collection_for_baker",
     "export_collection_to_fbx",
+    "export_objects_to_fbx",
+    "get_baker_input_objects",
+    "get_baker_export_source",
     "find_baked_files",
     "get_baker_profile_index",
     "get_baker_profile",
@@ -276,6 +279,8 @@ def validate_baker_setup(
     collection: bpy.types.Collection | None,
     preferences=None,
     state=None,
+    *,
+    selected_objects=None,
 ) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -285,7 +290,13 @@ def validate_baker_setup(
     elif not Path(bpy.path.abspath(executable_path)).is_file():
         errors.append("Substance baker executable was not found.")
 
-    if collection is None:
+    if getattr(state, "input_mode", "COLLECTION") == "SELECTED":
+        meshes = [obj for obj in (selected_objects or ()) if obj.type == "MESH"]
+        if not meshes:
+            errors.append("Select at least one mesh object for the baker input.")
+        elif len(meshes) > 500:
+            warnings.append("Many mesh objects selected; preview and export may take longer.")
+    elif collection is None:
         errors.append("No target collection selected.")
     else:
         mesh_count = len([obj for obj in collection.all_objects if obj.type == "MESH"])
@@ -434,6 +445,25 @@ def get_export_source(collection: bpy.types.Collection | None, internal_export_p
     }
 
 
+def get_baker_input_objects(context: bpy.types.Context, state) -> tuple[bpy.types.Object, ...]:
+    """Freeze source meshes before export changes context or launches a worker."""
+    if getattr(state, "input_mode", "COLLECTION") == "SELECTED":
+        objects = context.selected_objects
+    else:
+        collection = state.target_collection
+        objects = collection.all_objects if collection else ()
+    return tuple(sorted((obj for obj in objects if obj.type == "MESH"), key=lambda obj: obj.name))
+
+
+def get_baker_export_source(state, internal_export_path: str | Path) -> dict[str, object]:
+    selected = getattr(state, "input_mode", "COLLECTION") == "SELECTED"
+    source = get_export_source(None if selected else state.target_collection, internal_export_path)
+    if selected:
+        source["name"] = "Selected Objects (Internal FBX)"
+        source["label"] = "Selected Objects: internal FBX export"
+    return source
+
+
 def _export_with_collection_exporter(context: bpy.types.Context, collection: bpy.types.Collection, export_source: dict[str, object]) -> Path:
     export_path = Path(export_source["path"])
     export_path.parent.mkdir(parents=True, exist_ok=True)
@@ -482,6 +512,47 @@ def export_collection_to_fbx(
         bake_anim=False,
         apply_scale_options="FBX_SCALE_UNITS",
     )
+    return export_path
+
+
+def export_objects_to_fbx(
+    context: bpy.types.Context,
+    objects: tuple[bpy.types.Object, ...],
+    export_path: str | Path,
+) -> Path:
+    """Export an exact mesh snapshot without changing the actual selection."""
+    meshes = tuple(obj for obj in objects if obj.type == "MESH")
+    if not meshes:
+        raise RuntimeError("Select at least one mesh object for the baker input.")
+    export_path = Path(export_path)
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    active = context.view_layer.objects.active
+    mode = active.mode if active else "OBJECT"
+    try:
+        # With collection='' the native FBX exporter reads context.selected_objects.
+        # Its success path restores mode; finally also covers an export exception.
+        with context.temp_override(selected_objects=meshes):
+            result = bpy.ops.export_scene.fbx(
+                filepath=str(export_path),
+                collection="",
+                use_selection=True,
+                use_active_collection=False,
+                batch_mode="OFF",
+                object_types={"MESH"},
+                mesh_smooth_type="OFF",
+                path_mode="AUTO",
+                use_mesh_modifiers=True,
+                add_leaf_bones=False,
+                bake_anim=False,
+                apply_scale_options="FBX_SCALE_UNITS",
+            )
+        if "FINISHED" not in result:
+            raise RuntimeError("Selected mesh FBX export did not finish.")
+    finally:
+        if active is not None and active.mode != mode:
+            context.view_layer.objects.active = active
+            with context.temp_override(active_object=active, object=active):
+                bpy.ops.object.mode_set(mode=mode)
     return export_path
 
 

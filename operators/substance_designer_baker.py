@@ -20,9 +20,11 @@ from ..utils.substance_designer_baker import (
     execute_bake_plan,
     export_collection_for_baker,
     export_collection_to_fbx,
+    export_objects_to_fbx,
+    get_baker_input_objects,
+    get_baker_export_source,
     get_baker_profile,
     get_baker_profile_index,
-    get_export_source,
     get_profile_by_index,
     parse_baker_info,
     probe_baker_executable,
@@ -70,7 +72,11 @@ def _job_paths(context: bpy.types.Context, job_id: str) -> dict[str, Path]:
     workspace_root = _workspace_root(context)
     job_root = ensure_directory(workspace_root / "jobs" / job_id)
     export_root = ensure_directory(job_root / "export")
-    scene_name = _selected_collection_scene_name(_bake_state(context).target_collection)
+    state = _bake_state(context)
+    scene_name = (
+        "Selected_Objects" if state.input_mode == "SELECTED"
+        else _selected_collection_scene_name(state.target_collection)
+    )
     export_path = export_root / f"{_sanitize_scene_name(scene_name)}.fbx"
     high_export_path = export_root / f"{_sanitize_scene_name(scene_name)}_high.fbx"
     cage_export_path = export_root / f"{_sanitize_scene_name(scene_name)}_cage.fbx"
@@ -145,10 +151,13 @@ def _collection_mesh_names(collection: bpy.types.Collection | None) -> set[str]:
     return {obj.name for obj in collection.all_objects if obj.type == "MESH"}
 
 
-def _naming_warnings(state) -> list[str]:
+def _naming_warnings(state, low_objects=None) -> list[str]:
     if state.projection_match_mode != "match_mesh_name" or state.use_lowdef_as_highdef:
         return []
-    low_names = _collection_mesh_names(state.target_collection)
+    low_names = (
+        {obj.name for obj in low_objects} if low_objects is not None
+        else _collection_mesh_names(state.target_collection)
+    )
     high_names = _collection_mesh_names(state.high_poly_collection)
     if not low_names or not high_names:
         return []
@@ -169,9 +178,8 @@ def _naming_warnings(state) -> list[str]:
 
 def _current_export_source(context: bpy.types.Context) -> dict[str, object]:
     state = _bake_state(context)
-    collection = state.target_collection
     paths = _job_paths(context, "inspect")
-    return get_export_source(collection, paths["export_path"])
+    return get_baker_export_source(state, paths["export_path"])
 
 
 def _set_preview_items(state, preview: dict[str, object]) -> None:
@@ -188,13 +196,19 @@ def _set_preview_items(state, preview: dict[str, object]) -> None:
     state.preview_message = str(preview["message"])
 
 
-def _export_and_collect_preview(context: bpy.types.Context) -> tuple[Path, dict[str, object], list[dict[str, str]], dict[str, object]]:
+def _export_and_collect_preview(context: bpy.types.Context, input_objects=None) -> tuple[Path, dict[str, object], list[dict[str, str]], dict[str, object]]:
     state = _bake_state(context)
     collection = state.target_collection
     preferences = _preferences(context)
-    paths = _job_paths(context, f"preview-{timestamp_job_id()}")
+    paths = _job_paths(context, f"preview-{timestamp_job_id()}-{uuid.uuid4().hex[:8]}")
 
-    export_source = export_collection_for_baker(context, collection, paths["export_path"])
+    if state.input_mode == "SELECTED":
+        if input_objects is None:
+            input_objects = get_baker_input_objects(context, state)
+        export_source = get_baker_export_source(state, paths["export_path"])
+        export_objects_to_fbx(context, input_objects, export_source["path"])
+    else:
+        export_source = export_collection_for_baker(context, collection, paths["export_path"])
     info_result = run_baker_command(
         preferences.substance_baker_executable,
         ["info", "--inputs", str(export_source["path"])],
@@ -334,15 +348,20 @@ class LCW_OT_sdb_validate(bpy.types.Operator):
         _resolve_selected_profile(preferences, state)
         export_source = _current_export_source(context)
         _update_export_source_state(state, export_source)
-        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
-        warnings.extend(_naming_warnings(state))
+        input_objects = get_baker_input_objects(context, state)
+        errors, warnings = validate_baker_setup(
+            preferences.substance_baker_executable, state.target_collection, preferences, state,
+            selected_objects=input_objects,
+        )
+        warnings.extend(_naming_warnings(state, input_objects))
         probe_ok, probe_message = probe_baker_executable(preferences.substance_baker_executable)
         if not probe_ok:
             errors.append(probe_message)
         warning_message = " | ".join(warnings)
         if errors:
             state.job_status = "FAILED"
-            self.report({"ERROR"}, " | ".join(errors[:3]))
+            state.job_message = " | ".join(errors[:3])
+            self.report({"ERROR"}, state.job_message)
             return {"CANCELLED"}
 
         state.job_status = "VALID"
@@ -360,14 +379,18 @@ class LCW_OT_sdb_validate(bpy.types.Operator):
 class LCW_OT_sdb_preview_targets(bpy.types.Operator):
     bl_idname = "lcw.sdb_preview_targets"
     bl_label = "Preview Targets"
-    bl_description = "Export the selected collection, inspect it with the Substance baker, and preview bake targets"
+    bl_description = "Export the chosen input, inspect it with the Substance baker, and preview bake targets"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
         state = _bake_state(context)
         preferences = _preferences(context)
         _resolve_selected_profile(preferences, state)
-        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
+        input_objects = get_baker_input_objects(context, state)
+        errors, warnings = validate_baker_setup(
+            preferences.substance_baker_executable, state.target_collection, preferences, state,
+            selected_objects=input_objects,
+        )
         if errors:
             state.job_status = "FAILED"
             state.job_message = " | ".join(errors)
@@ -376,7 +399,7 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
         warning_message = " | ".join(warnings)
 
         try:
-            _export_path, _export_source, _meshes, preview = _export_and_collect_preview(context)
+            _export_path, _export_source, _meshes, preview = _export_and_collect_preview(context, input_objects)
         except Exception as exc:
             state.job_status = "FAILED"
             state.job_message = str(exc)
@@ -396,7 +419,7 @@ class LCW_OT_sdb_preview_targets(bpy.types.Operator):
 class LCW_OT_sdb_bake_ao(bpy.types.Operator):
     bl_idname = "lcw.sdb_bake_ao"
     bl_label = "Bake Enabled Bakers"
-    bl_description = "Export the selected collection and bake the currently enabled Substance baker outputs"
+    bl_description = "Export the chosen input and bake the currently enabled Substance baker outputs"
     bl_options = {"REGISTER"}
 
     _timer = None
@@ -435,8 +458,12 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
         state = _bake_state(context)
         preferences = _preferences(context)
         _resolve_selected_profile(preferences, state)
-        errors, warnings = validate_baker_setup(preferences.substance_baker_executable, state.target_collection, preferences, state)
-        warnings.extend(_naming_warnings(state))
+        input_objects = get_baker_input_objects(context, state)
+        errors, warnings = validate_baker_setup(
+            preferences.substance_baker_executable, state.target_collection, preferences, state,
+            selected_objects=input_objects,
+        )
+        warnings.extend(_naming_warnings(state, input_objects))
         if errors:
             state.job_status = "FAILED"
             state.job_message = " | ".join(errors)
@@ -447,7 +474,7 @@ class LCW_OT_sdb_bake_ao(bpy.types.Operator):
             self.report({"WARNING"}, warning_message)
 
         try:
-            export_path, _export_source, _meshes, preview = _export_and_collect_preview(context)
+            export_path, _export_source, _meshes, preview = _export_and_collect_preview(context, input_objects)
         except Exception as exc:
             state.job_status = "FAILED"
             state.job_message = str(exc)

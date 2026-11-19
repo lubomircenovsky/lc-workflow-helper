@@ -92,7 +92,8 @@ class LCW_OT_shape_key_set_value(bpy.types.Operator):
         description="Shape key value applied to the active shape key across matching selected objects",
         default=1.0,
         min=0.0,
-        max=1.0,
+        # 10.0 is Blender's hard slider_max; assigning ShapeKey.value clamps to each key's own range.
+        max=10.0,
     )
 
     @classmethod

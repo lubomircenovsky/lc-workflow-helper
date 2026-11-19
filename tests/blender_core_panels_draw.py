@@ -121,6 +121,16 @@ try:
     for summary in SDB_BAKER_SUMMARIES.values():
         assert found[summary]['icon'] == 'TEXTURE', summary
 
+    baker_state = scene.substance_designer_baker
+    assert ('prop', 'input_mode', {'expand': True}) in calls
+    assert any(c[:2] == ('prop', 'target_collection') for c in calls)
+    baker_state.input_mode = 'SELECTED'
+    selected_calls = draw(panels.LCW_PT_substance_designer_baker)
+    assert not any(c[:2] == ('prop', 'target_collection') for c in selected_calls)
+    assert any(c[:2] == ('prop', 'selection_mode') for c in selected_calls)
+    assert 'Internal FBX export uses only selected meshes.' in labels(selected_calls)
+    baker_state.input_mode = 'COLLECTION'
+
     assert 'Palette' in labels(draw(panels.LCW_PT_colors))
 
     calls = draw(panels.LCW_PT_uv)

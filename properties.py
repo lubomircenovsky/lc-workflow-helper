@@ -402,6 +402,15 @@ class LCW_PG_SDBPreviewItem(bpy.types.PropertyGroup):
 
 
 class LCW_PG_SubstanceDesignerBakeState(bpy.types.PropertyGroup):
+    input_mode: EnumProperty(
+        name="Input",
+        description="Choose the source geometry independently of bake target grouping",
+        items=(
+            ("COLLECTION", "Collection", "Export a collection and its children"),
+            ("SELECTED", "Selected Objects", "Export only selected mesh objects at Preview or Bake start"),
+        ),
+        default="COLLECTION",
+    )
     target_collection: PointerProperty(
         name="Collection",
         description="Collection exported and inspected for bake targets",
@@ -1071,10 +1080,10 @@ class LCW_PG_WindowState(bpy.types.PropertyGroup):
     )
     shape_key_value: FloatProperty(
         name="Shape Key Value",
-        description="Value copied from the active shape key to matching selected objects",
+        description="Value copied from the active shape key to matching selected objects. Each key clamps it to its own Range Min/Max",
         default=1.0,
         min=0.0,
-        max=1.0,
+        max=10.0,
     )
     shape_key_animation_names: StringProperty(
         name="Name Fragments",
